@@ -1,0 +1,38 @@
+# === CRITICAL: Patient Data Protection ===
+# NEVER commit DICOM files or patient data
+*.dcm
+*.DCM
+*.dicom
+*.DICOM
+DICOMDIR
+dicom-samples/
+tests/dicom-test-data/
+
+# === Environment & Secrets ===
+.env
+.env.local
+.env.production
+config/nginx/ssl/
+
+# === Docker ===
+orthanc-db/
+data/
+
+# === OS ===
+.DS_Store
+Thumbs.db
+
+# === IDE ===
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# === Node (if landing page uses build tools) ===
+node_modules/
+dist/
+build/
+
+# === Logs ===
+*.log
+logs/

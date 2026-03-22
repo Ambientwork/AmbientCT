@@ -1,0 +1,35 @@
+name: Notify on GitHub Events
+
+on:
+  watch:
+    types: [started]
+  issues:
+    types: [opened]
+  discussion:
+    types: [created]
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    if: github.actor != 'foundermode'
+    steps:
+      - name: Send Telegram Notification
+        env:
+          BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          if [ "${{ github.event_name }}" == "watch" ]; then
+            MSG="⭐ Neuer Star auf AmbientCT von @${{ github.actor }}"
+          elif [ "${{ github.event_name }}" == "issues" ]; then
+            TITLE=$(echo "${{ github.event.issue.title }}" | head -c 100)
+            MSG="📋 Neues Issue auf AmbientCT: ${TITLE} von @${{ github.actor }}"
+          elif [ "${{ github.event_name }}" == "discussion" ]; then
+            MSG="💬 Neue Discussion auf AmbientCT von @${{ github.actor }}"
+          fi
+
+          if [ -n "$BOT_TOKEN" ] && [ -n "$CHAT_ID" ]; then
+            curl -s -X POST "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" \
+              -d chat_id="${CHAT_ID}" \
+              -d text="${MSG}" \
+              -d parse_mode="Markdown" || true
+          fi

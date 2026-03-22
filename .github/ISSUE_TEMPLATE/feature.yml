@@ -1,0 +1,35 @@
+name: 🚀 Feature Request
+description: Suggest a new feature for AmbientCT
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: description
+    attributes:
+      label: What should be built?
+      placeholder: Describe the feature clearly...
+    validations:
+      required: true
+  - type: dropdown
+    id: priority
+    attributes:
+      label: Priority
+      options:
+        - "🔥 High — need this week"
+        - "⭐ Medium — need this month"
+        - "💤 Low — nice to have"
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      options:
+        - "OHIF Viewer (Frontend)"
+        - "Orthanc (PACS Backend)"
+        - "Docker / Infrastructure"
+        - "Scripts / CLI"
+        - "Documentation"
+        - "Landing Page"
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Done when...
+      placeholder: "It is done when..."

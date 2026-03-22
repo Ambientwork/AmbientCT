@@ -1,0 +1,37 @@
+name: 🐛 Bug Report
+description: Something is not working correctly
+labels: ["bug"]
+body:
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Start the stack with `docker compose up`
+        2. Open http://localhost:3000
+        3. Upload a DICOM file
+        4. ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      placeholder: What should happen?
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      placeholder: What happens instead?
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: "⚠️ Run `python3 scripts/scrub.py` on logs BEFORE pasting!"
+      placeholder: Paste relevant logs here (scrubbed of patient data)
+      render: shell
+  - type: input
+    id: os
+    attributes:
+      label: Operating System
+      placeholder: "macOS 15.3 / Ubuntu 24.04 / Windows 11"

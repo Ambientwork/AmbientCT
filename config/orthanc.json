@@ -1,0 +1,49 @@
+{
+  "Name": "DentalPACS",
+  "StorageDirectory": "/var/lib/orthanc/db",
+  "IndexDirectory": "/var/lib/orthanc/db",
+  "StorageCompression": false,
+  "MaximumStorageSize": 0,
+  "MaximumPatientCount": 0,
+  "HttpPort": 8042,
+  "DicomPort": 4242,
+  "DicomAet": "DENTALPACS",
+  "CheckCalledAet": false,
+  "RemoteAccessAllowed": true,
+  "AuthenticationEnabled": true,
+  "DicomCheckModalityHost": false,
+  "OverwriteInstances": true,
+
+  "DicomWeb": {
+    "Enable": true,
+    "Root": "/dicom-web/",
+    "EnableWado": true,
+    "WadoRoot": "/wado",
+    "Host": "localhost",
+    "Ssl": false,
+    "StudiesMetadata": "MainDicomTags",
+    "SeriesMetadata": "Full"
+  },
+
+  "Plugins": [
+    "/usr/share/orthanc/plugins/libOrthancDicomWeb.so",
+    "/usr/share/orthanc/plugins/libOrthancOHIF.so"
+  ],
+
+  "OHIF": {
+    "DataSource": "dicom-web"
+  },
+
+  "HttpsCACertificates": "",
+  "SslEnabled": false,
+  "SslCertificate": "",
+
+  "StableAge": 60,
+  "LimitFindResults": 100,
+  "LimitFindInstances": 100,
+
+  "LogExportedResources": false,
+  "KeepAlive": true,
+  "HttpThreadsCount": 10,
+  "StorageAccessOnFind": "Never"
+}

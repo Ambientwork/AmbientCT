@@ -1,0 +1,64 @@
+name: Build and Deploy AmbientCT
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - 'docs/**'
+      - 'landing/**'
+      - '*.md'
+  pull_request:
+    branches: [main]
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ambientwork/ambientct
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Start stack
+        run: |
+          cp .env.example .env
+          sed -i 's/changeme-on-first-run/testpassword123/' .env
+          docker compose up -d
+          sleep 15
+
+      - name: Run smoke tests
+        run: |
+          chmod +x scripts/smoke-test.sh
+          ORTHANC_PASSWORD=testpassword123 ./scripts/smoke-test.sh
+
+      - name: Teardown
+        if: always()
+        run: docker compose down -v
+
+  build-and-push:
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Login to ghcr.io
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push Orthanc config image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: Dockerfile.orthanc
+          push: true
+          tags: |
+            ghcr.io/${{ env.IMAGE_NAME }}-orthanc:${{ github.sha }}
+            ghcr.io/${{ env.IMAGE_NAME }}-orthanc:latest

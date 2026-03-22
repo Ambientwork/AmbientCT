@@ -1,0 +1,49 @@
+services:
+  orthanc:
+    image: orthancteam/orthanc:latest
+    platform: linux/amd64
+    container_name: ambientct-orthanc
+    restart: unless-stopped
+    mem_limit: 512m
+    cpus: 1.0
+    ports:
+      - "8042:8042"
+      - "4242:4242"
+    environment:
+      ORTHANC__NAME: "AmbientCT"
+      ORTHANC__AUTHENTICATION_ENABLED: "true"
+      ORTHANC__REGISTERED_USERS: '{"admin": "oTan2loAWqd0mG17P2SW"}'
+      DICOM_WEB_PLUGIN_ENABLED: "true"
+      OHIF_PLUGIN_ENABLED: "true"
+      ORTHANC__OVERWRITE_INSTANCES: "true"
+    volumes:
+      - orthanc-db:/var/lib/orthanc/db
+    networks:
+      - pacs-net
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request as r; r.urlopen(r.Request('http://localhost:8042/system', headers={'Authorization':'Basic '+__import__('base64').b64encode(b'admin:oTan2loAWqd0mG17P2SW').decode()}))\" || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  viewer:
+    image: ohif/app:v3.9.2
+    platform: linux/amd64
+    container_name: ambientct-viewer
+    restart: unless-stopped
+    mem_limit: 256m
+    cpus: 0.5
+    ports:
+      - "3000:80"
+    depends_on:
+      orthanc:
+        condition: service_healthy
+    networks:
+      - pacs-net
+
+volumes:
+  orthanc-db:
+
+networks:
+  pacs-net:
