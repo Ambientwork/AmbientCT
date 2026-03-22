@@ -20,6 +20,33 @@ See `docs/HOOKS.md` for details.
 Run `find . -type f -name '*.md' | head -20` or `ls -la` to orient yourself.
 Key directories: `config/`, `scripts/`, `docs/`, `tests/`, `landing/`.
 
+## Disjoint Scopes (for parallel Conductor sessions)
+Each scope is independent — agents should ONLY touch files in their assigned scope.
+- **Scope A**: `config/ohif-config.js` — Dental Presets, Viewer Config
+- **Scope B**: `scripts/` — setup.sh, backup.sh, smoke-test.sh, import-dicom.sh
+- **Scope C**: `landing/` — Landing Page for GitHub Pages
+- **Scope D**: `docs/` — ARCHITECTURE.md, SETUP-GUIDE.md, TROUBLESHOOTING.md
+- **Scope E**: `docker-compose.yml` + `.env.example` — Infrastructure
+- **Scope F**: `README.md` — Hero-Readme with badges, screenshots, quick start
+- **Scope G**: `.github/workflows/` — CI, Pages, Release, Notify
+
+## gstack Workflow
+Use gstack commands for every non-trivial task:
+- `/office-hours` — Brainstorm, product diagnostic, design doc
+- `/plan-eng-review` — Architecture, data flow, edge cases, tests
+- `/review` — Staff engineer PR review, adversarial mode
+- `/investigate` — Debug with investigation-first approach
+- `/ship` — PR, tests, deploy, verify
+
+Design Doc: `~/.gstack/projects/Ambientwork-AmbientCT/`
+Search Before Building. Always.
+
+## superpowers
+When superpowers MCP is available, use it for:
+- Extended thinking on complex architecture decisions
+- Multi-file refactoring with full context
+- Security review of Docker and auth configurations
+
 ## Model routing
 - **Haiku**: File search, grep, simple config edits, formatting
 - **Sonnet**: Multi-file changes, Docker config, script writing, tests
