@@ -42,8 +42,16 @@
   "LimitFindResults": 100,
   "LimitFindInstances": 100,
 
-  "LogExportedResources": false,
+  "LogExportedResources": true,
   "KeepAlive": true,
   "HttpThreadsCount": 10,
-  "StorageAccessOnFind": "Never"
+  "StorageAccessOnFind": "Never",
+
+  "HttpVerbose": false,
+  "DicomAlwaysAllowEcho": true,
+  "DicomAlwaysAllowFind": false,
+  "DicomAlwaysAllowFindWorklist": false,
+  "DicomAlwaysAllowGet": false,
+  "DicomAlwaysAllowMove": false,
+  "DicomAlwaysAllowStore": true
 }
