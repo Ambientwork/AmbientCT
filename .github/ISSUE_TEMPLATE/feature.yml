@@ -1,4 +1,4 @@
-name: 🚀 Feature Request
+name: Feature Request
 description: Suggest a new feature for AmbientCT
 labels: ["enhancement"]
 body:
@@ -9,14 +9,22 @@ body:
       placeholder: Describe the feature clearly...
     validations:
       required: true
+
+  - type: textarea
+    id: current_workflow
+    attributes:
+      label: Your current workflow
+      placeholder: "How do you handle this today? What workaround do you use?"
+
   - type: dropdown
     id: priority
     attributes:
       label: Priority
       options:
-        - "🔥 High — need this week"
-        - "⭐ Medium — need this month"
-        - "💤 Low — nice to have"
+        - "High — need this week"
+        - "Medium — need this month"
+        - "Low — nice to have"
+
   - type: dropdown
     id: component
     attributes:
@@ -28,6 +36,16 @@ body:
         - "Scripts / CLI"
         - "Documentation"
         - "Landing Page"
+
+  - type: dropdown
+    id: would_contribute
+    attributes:
+      label: Would you contribute this feature?
+      options:
+        - "Yes — I'll open a PR"
+        - "Maybe — with guidance"
+        - "No — just a suggestion"
+
   - type: textarea
     id: acceptance
     attributes:
