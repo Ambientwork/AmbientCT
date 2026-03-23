@@ -1,4 +1,4 @@
-name: Create Release
+name: Release
 
 on:
   push:
@@ -16,25 +16,25 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Generate Changelog
+      - name: Generate changelog
         id: changelog
-        uses: mikepenz/release-changelog-builder-action@v4
+        uses: mikepenz/release-changelog-builder-action@v5
         with:
           configuration: |
             {
               "categories": [
-                {"title": "🚀 Features", "labels": ["enhancement"]},
-                {"title": "🐛 Bug Fixes", "labels": ["bug"]},
-                {"title": "🦷 Dental Presets", "labels": ["dental"]},
-                {"title": "📝 Documentation", "labels": ["documentation"]},
-                {"title": "🔧 Maintenance", "labels": ["dependencies"]}
+                {"title": "Features", "labels": ["enhancement"]},
+                {"title": "Bug Fixes", "labels": ["bug"]},
+                {"title": "Dental Presets", "labels": ["dental"]},
+                {"title": "Documentation", "labels": ["documentation"]},
+                {"title": "Maintenance", "labels": ["dependencies"]}
               ]
             }
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
           body: ${{ steps.changelog.outputs.changelog }}
           generate_release_notes: true
