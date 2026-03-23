@@ -1,33 +1,33 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="de">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>AmbientCT — Free DICOM Viewer for Dental &amp; Medical Practices</title>
-  <meta name="description" content="Open-source PACS server and DICOM viewer. View CBCT, CT, MRI, OPG in your browser with 3D volume rendering. Zero license fees. One command setup.">
-  <meta property="og:title" content="AmbientCT — Your Practice PACS in a Box">
-  <meta property="og:description" content="Free, open-source DICOM viewer with 3D volume rendering, MPR, and dental presets. Built for dental and medical practices.">
+  <title>AmbientCT — Kostenloser DICOM-Viewer für Zahnarzt- und Arztpraxen</title>
+  <meta name="description" content="Open-Source PACS-Server und DICOM-Viewer. CBCT, CT, MRI und OPG direkt im Browser mit 3D-Darstellung. Keine Lizenzgebühren. Ein Befehl genügt.">
+  <meta property="og:title" content="AmbientCT — Ihr Praxis-PACS, ein Befehl">
+  <meta property="og:description" content="Kostenloser Open-Source DICOM-Viewer mit 3D-Darstellung, MPR und Dental-Presets. Für Zahnarzt- und Arztpraxen.">
   <meta property="og:type" content="website">
-  <meta property="og:url" content="https://ambientwork.github.io/AmbientCT/">
+  <meta property="og:url" content="https://ct.ambientwork.ai">
   <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:title" content="AmbientCT — Free DICOM Viewer">
-  <meta name="twitter:description" content="Open-source PACS server with 3D volume rendering. One command deploy.">
+  <meta name="twitter:title" content="AmbientCT — Kostenloser DICOM-Viewer">
+  <meta name="twitter:description" content="Open-Source PACS-Server mit 3D-Darstellung. Ein Befehl genügt.">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🦷</text></svg>">
   <style>
     :root {
-      --bg: #09090b;
-      --surface: #18181b;
-      --surface-hover: #1e1e22;
-      --border: #27272a;
-      --border-light: #3f3f46;
-      --text: #fafafa;
-      --text-secondary: #a1a1aa;
-      --text-dim: #71717a;
-      --accent: #3b82f6;
-      --accent-hover: #2563eb;
-      --accent-glow: rgba(59, 130, 246, 0.15);
-      --green: #22c55e;
-      --green-dim: rgba(34, 197, 94, 0.1);
+      --bg: #ffffff;
+      --surface: #f8fafc;
+      --surface-hover: #f1f5f9;
+      --border: #e2e8f0;
+      --border-light: #cbd5e1;
+      --text: #1e293b;
+      --text-secondary: #475569;
+      --text-dim: #94a3b8;
+      --accent: #2563eb;
+      --accent-hover: #1d4ed8;
+      --accent-light: rgba(37, 99, 235, 0.08);
+      --green: #16a34a;
+      --green-light: rgba(22, 163, 74, 0.08);
       --radius: 12px;
       --radius-sm: 8px;
     }
@@ -55,7 +55,7 @@
       left: 0;
       right: 0;
       z-index: 100;
-      background: rgba(9, 9, 11, 0.8);
+      background: rgba(255, 255, 255, 0.85);
       backdrop-filter: blur(12px);
       -webkit-backdrop-filter: blur(12px);
       border-bottom: 1px solid var(--border);
@@ -114,7 +114,7 @@
       transform: translateX(-50%);
       width: 600px;
       height: 400px;
-      background: radial-gradient(ellipse, var(--accent-glow) 0%, transparent 70%);
+      background: radial-gradient(ellipse, var(--accent-light) 0%, transparent 70%);
       pointer-events: none;
     }
     .hero-badge {
@@ -122,8 +122,8 @@
       align-items: center;
       gap: 6px;
       padding: 5px 14px;
-      background: var(--green-dim);
-      border: 1px solid rgba(34, 197, 94, 0.2);
+      background: var(--green-light);
+      border: 1px solid rgba(22, 163, 74, 0.2);
       border-radius: 20px;
       font-size: 13px;
       font-weight: 500;
@@ -143,17 +143,15 @@
       letter-spacing: -0.03em;
       line-height: 1.1;
       margin-bottom: 20px;
+      color: var(--text);
     }
     h1 .gradient {
-      background: linear-gradient(135deg, var(--accent) 0%, #a78bfa 100%);
-      -webkit-background-clip: text;
-      -webkit-text-fill-color: transparent;
-      background-clip: text;
+      color: var(--accent);
     }
     .subtitle {
       font-size: 18px;
       color: var(--text-secondary);
-      max-width: 540px;
+      max-width: 560px;
       margin: 0 auto 40px;
       line-height: 1.7;
     }
@@ -179,21 +177,21 @@
     .btn-primary {
       background: var(--accent);
       color: white;
-      box-shadow: 0 0 20px rgba(59, 130, 246, 0.3);
+      box-shadow: 0 2px 8px rgba(37, 99, 235, 0.25);
     }
     .btn-primary:hover {
       background: var(--accent-hover);
-      box-shadow: 0 0 30px rgba(59, 130, 246, 0.4);
+      box-shadow: 0 4px 12px rgba(37, 99, 235, 0.35);
       transform: translateY(-1px);
     }
     .btn-secondary {
-      background: var(--surface);
+      background: white;
       color: var(--text);
       border: 1px solid var(--border);
     }
     .btn-secondary:hover {
       border-color: var(--border-light);
-      background: var(--surface-hover);
+      background: var(--surface);
     }
 
     /* ---------- Install block ---------- */
@@ -201,8 +199,8 @@
     .install-block {
       max-width: 560px;
       margin: 0 auto;
-      background: var(--surface);
-      border: 1px solid var(--border);
+      background: #1e293b;
+      border: 1px solid #334155;
       border-radius: var(--radius);
       overflow: hidden;
     }
@@ -211,37 +209,37 @@
       align-items: center;
       justify-content: space-between;
       padding: 10px 16px;
-      border-bottom: 1px solid var(--border);
-      background: rgba(255,255,255,0.02);
+      border-bottom: 1px solid #334155;
+      background: rgba(255,255,255,0.03);
     }
     .install-dots { display: flex; gap: 6px; }
     .install-dots span {
       width: 10px;
       height: 10px;
       border-radius: 50%;
-      background: var(--border);
+      background: #475569;
     }
     .copy-btn {
       background: none;
-      border: 1px solid var(--border);
-      color: var(--text-dim);
+      border: 1px solid #475569;
+      color: #94a3b8;
       padding: 3px 10px;
       border-radius: 4px;
       cursor: pointer;
       font-size: 12px;
       transition: all 0.2s;
     }
-    .copy-btn:hover { color: var(--text); border-color: var(--border-light); }
+    .copy-btn:hover { color: #e2e8f0; border-color: #64748b; }
     .install-code {
       padding: 20px;
       font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
       font-size: 13px;
       line-height: 1.8;
-      color: var(--text-secondary);
+      color: #94a3b8;
     }
-    .install-code .cmd { color: var(--green); }
-    .install-code .comment { color: var(--text-dim); }
-    .install-code .url { color: var(--accent); }
+    .install-code .cmd { color: #4ade80; }
+    .install-code .comment { color: #64748b; }
+    .install-code .url { color: #60a5fa; }
 
     /* ---------- Screenshot ---------- */
     .screenshot-section { padding: 60px 0; }
@@ -250,7 +248,7 @@
       border: 1px solid var(--border);
       border-radius: var(--radius);
       overflow: hidden;
-      box-shadow: 0 25px 50px rgba(0,0,0,0.4);
+      box-shadow: 0 25px 50px rgba(0,0,0,0.08);
     }
     .screenshot-bar {
       display: flex;
@@ -258,7 +256,7 @@
       gap: 8px;
       padding: 12px 16px;
       border-bottom: 1px solid var(--border);
-      background: rgba(255,255,255,0.02);
+      background: white;
     }
     .screenshot-bar .dots { display: flex; gap: 6px; }
     .screenshot-bar .dots span {
@@ -284,7 +282,7 @@
       gap: 12px;
       color: var(--text-dim);
       font-size: 14px;
-      background: linear-gradient(135deg, var(--surface) 0%, #1a1a2e 100%);
+      background: linear-gradient(135deg, #f8fafc 0%, #eef2ff 100%);
     }
     .screenshot-placeholder .icon { font-size: 48px; opacity: 0.6; }
 
@@ -305,6 +303,7 @@
       font-weight: 700;
       letter-spacing: -0.02em;
       margin-bottom: 48px;
+      color: var(--text);
     }
     .features-grid {
       display: grid;
@@ -319,7 +318,7 @@
       transition: border-color 0.2s, transform 0.2s;
     }
     .feature:hover {
-      border-color: var(--border-light);
+      border-color: var(--accent);
       transform: translateY(-2px);
     }
     .feature-icon {
@@ -328,7 +327,7 @@
       display: flex;
       align-items: center;
       justify-content: center;
-      background: var(--accent-glow);
+      background: var(--accent-light);
       border-radius: 10px;
       font-size: 20px;
       margin-bottom: 16px;
@@ -349,20 +348,20 @@
     .arch-diagram {
       max-width: 720px;
       margin: 0 auto;
-      background: var(--surface);
-      border: 1px solid var(--border);
+      background: #1e293b;
+      border: 1px solid #334155;
       border-radius: var(--radius);
       padding: 40px;
       font-family: 'SF Mono', 'Fira Code', monospace;
       font-size: 13px;
       line-height: 1.6;
-      color: var(--text-secondary);
+      color: #94a3b8;
       overflow-x: auto;
     }
     .arch-diagram pre { white-space: pre; }
-    .arch-diagram .highlight { color: var(--accent); }
-    .arch-diagram .green { color: var(--green); }
-    .arch-diagram .dim { color: var(--text-dim); }
+    .arch-diagram .highlight { color: #60a5fa; }
+    .arch-diagram .green { color: #4ade80; }
+    .arch-diagram .dim { color: #64748b; }
 
     /* ---------- Stack ---------- */
     .stack-section { padding: 80px 0; }
@@ -381,7 +380,7 @@
       border-radius: var(--radius);
       transition: border-color 0.2s;
     }
-    .stack-item:hover { border-color: var(--border-light); }
+    .stack-item:hover { border-color: var(--accent); }
     .stack-item .name {
       font-weight: 600;
       font-size: 15px;
@@ -396,7 +395,7 @@
       color: var(--text-dim);
       margin-top: 8px;
       padding: 2px 8px;
-      background: rgba(255,255,255,0.04);
+      background: var(--accent-light);
       border-radius: 4px;
       display: inline-block;
     }
@@ -417,7 +416,7 @@
       border-radius: var(--radius-sm);
       transition: border-color 0.2s;
     }
-    .preset:hover { border-color: var(--border-light); }
+    .preset:hover { border-color: var(--accent); }
     .preset .name {
       font-weight: 600;
       font-size: 14px;
@@ -455,7 +454,7 @@
       transform: translateX(-50%);
       width: 500px;
       height: 200px;
-      background: radial-gradient(ellipse, var(--accent-glow) 0%, transparent 70%);
+      background: radial-gradient(ellipse, var(--accent-light) 0%, transparent 70%);
       pointer-events: none;
     }
     .cta-box h2 {
@@ -489,11 +488,11 @@
       color: var(--text-secondary);
     }
     .footer-brand a {
-      color: var(--text);
+      color: var(--accent);
       text-decoration: none;
       font-weight: 600;
     }
-    .footer-brand a:hover { color: var(--accent); }
+    .footer-brand a:hover { text-decoration: underline; }
     .footer-links {
       display: flex;
       gap: 20px;
@@ -554,8 +553,8 @@
         <span>AmbientCT</span>
       </a>
       <div class="nav-links">
-        <a href="#features">Features</a>
-        <a href="#architecture">Architecture</a>
+        <a href="#funktionen">Funktionen</a>
+        <a href="#architektur">Architektur</a>
         <a href="#presets">Presets</a>
         <a href="https://github.com/Ambientwork/AmbientCT" class="nav-gh">
           <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
@@ -569,22 +568,23 @@
 
     <!-- Hero -->
     <section class="hero">
-      <span class="hero-badge">Open Source &middot; MIT License</span>
+      <span class="hero-badge">Open Source &middot; MIT-Lizenz</span>
       <h1>
-        Your Practice PACS<br>
-        <span class="gradient">in a Box</span>
+        Ihr Praxis-PACS &mdash;<br>
+        <span class="gradient">ein Befehl</span>
       </h1>
       <p class="subtitle">
-        Free DICOM viewer for dental and medical practices. CBCT, CT, MRI &mdash;
-        3D volume rendering in your browser. Zero license fees, one command.
+        Kostenloser DICOM-Viewer für Zahnarzt- und Arztpraxen.
+        CBCT, CT, MRI &mdash; 3D-Darstellung direkt im Browser.
+        Keine Lizenzgebühren, keine Cloud, keine Registrierung.
       </p>
       <div class="cta-group">
         <a href="https://github.com/Ambientwork/AmbientCT" class="btn btn-primary">
           <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
-          View on GitHub
+          Auf GitHub ansehen
         </a>
-        <a href="#quickstart" class="btn btn-secondary">
-          Quick Start &rarr;
+        <a href="#schnellstart" class="btn btn-secondary">
+          Schnellstart &rarr;
         </a>
       </div>
     </section>
@@ -600,89 +600,89 @@
         </div>
         <div class="screenshot-placeholder">
           <div class="icon">🦷</div>
-          OHIF Viewer with CBCT &mdash; MPR &amp; 3D Volume Rendering
+          OHIF Viewer mit CBCT &mdash; MPR &amp; 3D-Darstellung
         </div>
       </div>
     </section>
 
     <!-- Quick Start -->
-    <section id="quickstart" class="install-section fade-in">
+    <section id="schnellstart" class="install-section fade-in">
       <div class="install-block">
         <div class="install-header">
           <div class="install-dots">
             <span></span><span></span><span></span>
           </div>
-          <button class="copy-btn" onclick="copyInstall(this)">Copy</button>
+          <button class="copy-btn" onclick="copyInstall(this)">Kopieren</button>
         </div>
         <div class="install-code">
-          <span class="comment"># Clone and run</span><br>
+          <span class="comment"># Herunterladen und starten</span><br>
           <span class="cmd">git clone</span> <span class="url">https://github.com/Ambientwork/AmbientCT.git</span><br>
           <span class="cmd">cd</span> AmbientCT<br>
           <span class="cmd">./scripts/setup.sh</span><br>
           <span class="cmd">docker compose up -d</span><br>
           <br>
-          <span class="comment"># Open viewer</span><br>
+          <span class="comment"># Viewer öffnen</span><br>
           <span class="cmd">open</span> <span class="url">http://localhost:3000</span>
         </div>
       </div>
     </section>
 
     <!-- Features -->
-    <section id="features" class="features-section">
-      <div class="section-label fade-in">Features</div>
-      <h2 class="section-title fade-in">Everything your practice needs</h2>
+    <section id="funktionen" class="features-section">
+      <div class="section-label fade-in">Funktionen</div>
+      <h2 class="section-title fade-in">Alles was Ihre Praxis braucht</h2>
       <div class="features-grid">
         <div class="feature fade-in">
           <div class="feature-icon">🏥</div>
-          <h3>Full PACS Server</h3>
-          <p>Orthanc with DICOMweb, C-STORE, and WADO. Receive images directly from any DICOM device on your network.</p>
+          <h3>Vollwertiger PACS-Server</h3>
+          <p>Orthanc mit DICOMweb, C-STORE und WADO. Empfangen Sie Bilder direkt von jedem DICOM-Gerät in Ihrem Netzwerk.</p>
         </div>
         <div class="feature fade-in">
           <div class="feature-icon">🧠</div>
-          <h3>3D Volume Rendering</h3>
-          <p>Axial, sagittal, and coronal MPR views powered by Cornerstone3D. GPU-accelerated WebGL rendering.</p>
+          <h3>3D-Darstellung</h3>
+          <p>Axiale, sagittale und koronale MPR-Ansichten mit Cornerstone3D. GPU-beschleunigte WebGL-Darstellung direkt im Browser.</p>
         </div>
         <div class="feature fade-in">
           <div class="feature-icon">🦷</div>
-          <h3>Dental Presets</h3>
-          <p>Window/level presets optimized for bone, soft tissue, implants, mandibular canal, and airway analysis.</p>
+          <h3>Dental-Presets</h3>
+          <p>Fenster-/Levelwerte optimiert für Knochen, Weichgewebe, Implantate, Mandibularkanal und Atemwegsanalyse.</p>
         </div>
         <div class="feature fade-in">
           <div class="feature-icon">📦</div>
-          <h3>One Command Deploy</h3>
-          <p>Docker Compose on Mac, Linux, and Windows. From zero to running PACS in under 5 minutes.</p>
+          <h3>Ein Befehl genügt</h3>
+          <p>Docker Compose auf Mac, Linux und Windows. Von Null zum laufenden PACS in unter 5 Minuten.</p>
         </div>
         <div class="feature fade-in">
           <div class="feature-icon">🔒</div>
-          <h3>Privacy First</h3>
-          <p>Runs entirely on your LAN. No cloud. No tracking. No analytics. Your patient data stays yours.</p>
+          <h3>Datenschutz zuerst</h3>
+          <p>Läuft komplett in Ihrem lokalen Netzwerk. Keine Cloud, kein Tracking, keine Analyse. Patientendaten bleiben bei Ihnen.</p>
         </div>
         <div class="feature fade-in">
           <div class="feature-icon">📂</div>
-          <h3>Any DICOM Source</h3>
-          <p>Drag &amp; drop files, use the CLI, or push from any CBCT, CT, or MRI scanner via DIMSE C-STORE.</p>
+          <h3>Jede DICOM-Quelle</h3>
+          <p>Dateien per Drag &amp; Drop, über die Kommandozeile oder direkt von CBCT-, CT- oder MRT-Scannern via DIMSE C-STORE.</p>
         </div>
       </div>
     </section>
 
     <!-- Architecture -->
-    <section id="architecture" class="arch-section">
-      <div class="section-label fade-in">Architecture</div>
-      <h2 class="section-title fade-in">Simple, self-contained stack</h2>
+    <section id="architektur" class="arch-section">
+      <div class="section-label fade-in">Architektur</div>
+      <h2 class="section-title fade-in">Einfach und eigenständig</h2>
       <div class="arch-diagram fade-in">
 <pre>
-<span class="dim">  Your Practice Network</span>
+<span class="dim">  Ihr Praxis-Netzwerk</span>
 
   <span class="highlight">Browser</span>  ────────>  <span class="green">OHIF Viewer :3000</span>
-  <span class="dim">(Doctor)</span>              <span class="dim">React + Cornerstone3D + WebGL</span>
+  <span class="dim">(Behandler)</span>           <span class="dim">React + Cornerstone3D + WebGL</span>
                              │
                              │ <span class="dim">DICOMweb (REST)</span>
                              ▼
   <span class="highlight">CBCT / Scanner</span>  ──>  <span class="green">Orthanc PACS :8042</span>
-  <span class="dim">(DIMSE C-STORE)</span>       <span class="dim">:4242 (DICOM port)</span>
+  <span class="dim">(DIMSE C-STORE)</span>       <span class="dim">:4242 (DICOM-Port)</span>
                              │
                              ▼
-                      <span class="dim">SQLite + Filesystem</span>
+                      <span class="dim">SQLite + Dateisystem</span>
                       <span class="dim">Docker Volume (orthanc-db)</span>
 </pre>
       </div>
@@ -690,27 +690,27 @@
 
     <!-- Stack -->
     <section class="stack-section">
-      <div class="section-label fade-in">Tech Stack</div>
-      <h2 class="section-title fade-in">Built on proven open-source</h2>
+      <div class="section-label fade-in">Technologie</div>
+      <h2 class="section-title fade-in">Bewährte Open-Source-Komponenten</h2>
       <div class="stack-grid fade-in">
         <div class="stack-item">
           <div class="name">Orthanc</div>
-          <div class="role">PACS Server</div>
-          <span class="version">v24.12</span>
+          <div class="role">PACS-Server</div>
+          <span class="version">v26.1</span>
         </div>
         <div class="stack-item">
           <div class="name">OHIF</div>
-          <div class="role">DICOM Viewer</div>
+          <div class="role">DICOM-Viewer</div>
           <span class="version">v3.9.2</span>
         </div>
         <div class="stack-item">
           <div class="name">Cornerstone3D</div>
-          <div class="role">Rendering Engine</div>
+          <div class="role">Rendering-Engine</div>
           <span class="version">latest</span>
         </div>
         <div class="stack-item">
           <div class="name">Docker</div>
-          <div class="role">Orchestration</div>
+          <div class="role">Orchestrierung</div>
           <span class="version">Compose</span>
         </div>
       </div>
@@ -718,38 +718,38 @@
 
     <!-- Dental Presets -->
     <section id="presets" class="presets-section">
-      <div class="section-label fade-in">Dental Presets</div>
-      <h2 class="section-title fade-in">Optimized for dental imaging</h2>
+      <div class="section-label fade-in">Dental-Presets</div>
+      <h2 class="section-title fade-in">Optimiert für dentale Bildgebung</h2>
       <div class="presets-grid fade-in">
         <div class="preset">
-          <div class="name">Bone (Standard)</div>
+          <div class="name">Knochen (Standard)</div>
           <div class="values">W:2000 / L:500</div>
-          <div class="desc">Bone structures, default view</div>
+          <div class="desc">Knochenstrukturen, Standardansicht</div>
         </div>
         <div class="preset">
-          <div class="name">Soft Tissue</div>
+          <div class="name">Weichgewebe</div>
           <div class="values">W:400 / L:40</div>
-          <div class="desc">Soft tissue, mucosa</div>
+          <div class="desc">Weichgewebe, Mukosa</div>
         </div>
         <div class="preset">
-          <div class="name">Dental Implant</div>
+          <div class="name">Dental-Implantat</div>
           <div class="values">W:4000 / L:1000</div>
-          <div class="desc">Implants, metal restorations</div>
+          <div class="desc">Implantate, Metallrestaurationen</div>
         </div>
         <div class="preset">
-          <div class="name">Mandibular Canal</div>
+          <div class="name">Mandibularkanal</div>
           <div class="values">W:2500 / L:700</div>
-          <div class="desc">Inferior alveolar nerve</div>
+          <div class="desc">Nervus alveolaris inferior</div>
         </div>
         <div class="preset">
-          <div class="name">Airway</div>
+          <div class="name">Atemwege</div>
           <div class="values">W:1600 / L:-600</div>
-          <div class="desc">Orthodontics, sleep medicine</div>
+          <div class="desc">Kieferorthopädie, Schlafmedizin</div>
         </div>
         <div class="preset">
-          <div class="name">Full Range</div>
+          <div class="name">Voller Bereich</div>
           <div class="values">W:4096 / L:1024</div>
-          <div class="desc">Complete Hounsfield range</div>
+          <div class="desc">Kompletter Hounsfield-Bereich</div>
         </div>
       </div>
     </section>
@@ -757,14 +757,14 @@
     <!-- CTA -->
     <section class="cta-section">
       <div class="cta-box fade-in">
-        <h2>Start viewing in 5 minutes</h2>
-        <p>Free forever. No registration. No credit card. Just clone and run.</p>
+        <h2>In 5 Minuten einsatzbereit</h2>
+        <p>Für immer kostenlos. Keine Registrierung. Keine Kreditkarte. Einfach herunterladen und starten.</p>
         <div class="cta-group">
           <a href="https://github.com/Ambientwork/AmbientCT" class="btn btn-primary">
-            Get Started
+            Schnellstart
           </a>
           <a href="https://github.com/Ambientwork/AmbientCT/blob/main/docs/SETUP-GUIDE.md" class="btn btn-secondary">
-            Read the Docs
+            Dokumentation lesen
           </a>
         </div>
       </div>
@@ -776,33 +776,33 @@
     <div class="container">
       <div class="footer-inner">
         <div class="footer-brand">
-          Built by <a href="https://ambientwork.ai">Ambientwork</a> &mdash; the better OS for dental practices.
+          Ein Open-Source-Projekt von <a href="https://ambientwork.ai">Ambientwork</a>
         </div>
         <div class="footer-links">
           <a href="https://github.com/Ambientwork/AmbientCT">GitHub</a>
-          <a href="https://github.com/Ambientwork/AmbientCT/blob/main/docs/SETUP-GUIDE.md">Docs</a>
-          <a href="https://github.com/Ambientwork/AmbientCT/blob/main/LICENSE">MIT License</a>
+          <a href="https://github.com/Ambientwork/AmbientCT/blob/main/docs/SETUP-GUIDE.md">Dokumentation</a>
+          <a href="https://github.com/Ambientwork/AmbientCT/blob/main/LICENSE">MIT-Lizenz</a>
         </div>
       </div>
       <div class="disclaimer">
-        AmbientCT is not a certified medical device. It is not FDA cleared or CE marked.
-        Intended for convenience, education, and research only.
-        Clinical diagnostic decisions must be made by licensed healthcare professionals using certified software.
+        AmbientCT ist kein zertifiziertes Medizinprodukt. Es ist weder FDA-zugelassen noch CE-gekennzeichnet.
+        Vorgesehen für Komfort, Ausbildung und Forschung.
+        Klinische Diagnoseentscheidungen müssen von zugelassenen Fachpersonen mit zertifizierter Software getroffen werden.
       </div>
     </div>
   </footer>
 
   <script>
-    // Copy install command
+    // Installationsbefehl kopieren
     function copyInstall(btn) {
-      const cmd = 'git clone https://github.com/Ambientwork/AmbientCT.git && cd AmbientCT && ./scripts/setup.sh && docker compose up -d';
+      var cmd = 'git clone https://github.com/Ambientwork/AmbientCT.git && cd AmbientCT && ./scripts/setup.sh && docker compose up -d';
       navigator.clipboard.writeText(cmd).then(function() {
-        btn.textContent = 'Copied!';
-        setTimeout(function() { btn.textContent = 'Copy'; }, 2000);
+        btn.textContent = 'Kopiert!';
+        setTimeout(function() { btn.textContent = 'Kopieren'; }, 2000);
       });
     }
 
-    // Scroll fade-in animation
+    // Scroll-Animation
     var observer = new IntersectionObserver(function(entries) {
       entries.forEach(function(entry) {
         if (entry.isIntersecting) {
