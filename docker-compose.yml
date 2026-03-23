@@ -4,20 +4,25 @@ services:
     platform: linux/amd64
     container_name: ambientct-orthanc
     restart: unless-stopped
-    mem_limit: 512m
-    cpus: 1.0
+    mem_limit: ${ORTHANC_MEM_LIMIT:-512m}
+    cpus: ${ORTHANC_CPUS:-1.0}
     ports:
       - "127.0.0.1:${ORTHANC_HTTP_PORT:-8042}:8042"
-      - "127.0.0.1:${ORTHANC_DICOM_PORT:-4242}:4242"
+      - "${ORTHANC_DICOM_PORT:-4242}:4242"
     environment:
-      ORTHANC__NAME: "AmbientCT"
+      ORTHANC__NAME: "${ORTHANC_INSTANCE_NAME:-AmbientCT}"
       ORTHANC__AUTHENTICATION_ENABLED: "true"
       ORTHANC__REGISTERED_USERS: '{"${ORTHANC_USER:-admin}": "${ORTHANC_PASSWORD:?ORTHANC_PASSWORD must be set in .env}"}'
       ORTHANC__DICOM_AET: "${DICOM_AE_TITLE:-DENTALPACS}"
-      ORTHANC__DICOM_CHECK_CALLED_AET: "true"
+      ORTHANC__DICOM_CHECK_CALLED_AET: "false"
+      ORTHANC__DICOM_CHECK_MODALITY_HOST: "false"
       DICOM_WEB_PLUGIN_ENABLED: "true"
       OHIF_PLUGIN_ENABLED: "true"
-      ORTHANC__OVERWRITE_INSTANCES: "true"
+      ORTHANC__OVERWRITE_INSTANCES: "${ORTHANC_OVERWRITE_INSTANCES:-true}"
+      ORTHANC__STABLE_AGE: "${ORTHANC_STABLE_AGE:-60}"
+      ORTHANC__LIMIT_FIND_RESULTS: "${ORTHANC_LIMIT_FIND_RESULTS:-100}"
+      ORTHANC__LIMIT_FIND_INSTANCES: "${ORTHANC_LIMIT_FIND_INSTANCES:-100}"
+      ORTHANC__HTTP_THREADS_COUNT: "${ORTHANC_HTTP_THREADS:-10}"
       ORTHANC_USER: "${ORTHANC_USER:-admin}"
       ORTHANC_PASSWORD: "${ORTHANC_PASSWORD:?ORTHANC_PASSWORD must be set in .env}"
     volumes:
@@ -25,6 +30,11 @@ services:
       - ./config/orthanc.json:/etc/orthanc/orthanc.json:ro
     networks:
       - pacs-net
+    logging:
+      driver: json-file
+      options:
+        max-size: "${LOG_MAX_SIZE:-10m}"
+        max-file: "${LOG_MAX_FILE:-3}"
     healthcheck:
       test: ["CMD-SHELL", "python3 -c \"import urllib.request as r; import os; u=os.environ.get('ORTHANC_USER','admin'); p=os.environ.get('ORTHANC_PASSWORD',''); r.urlopen(r.Request('http://localhost:8042/system', headers={'Authorization':'Basic '+__import__('base64').b64encode(f'{u}:{p}'.encode()).decode()}))\" || exit 1"]
       interval: 30s
@@ -33,12 +43,12 @@ services:
       start_period: 30s
 
   viewer:
-    image: ohif/app:v3.9.2
+    image: ohif/app:${OHIF_VERSION:-v3.9.2}
     platform: linux/amd64
     container_name: ambientct-viewer
     restart: unless-stopped
-    mem_limit: 256m
-    cpus: 0.5
+    mem_limit: ${VIEWER_MEM_LIMIT:-256m}
+    cpus: ${VIEWER_CPUS:-0.5}
     ports:
       - "127.0.0.1:${VIEWER_PORT:-3000}:80"
     depends_on:
@@ -48,6 +58,51 @@ services:
       - ./config/ohif-config.js:/usr/share/nginx/html/app-config.js:ro
     networks:
       - pacs-net
+    logging:
+      driver: json-file
+      options:
+        max-size: "${LOG_MAX_SIZE:-10m}"
+        max-file: "${LOG_MAX_FILE:-3}"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:80/ || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+
+  # ---------------------------------------------------------------------------
+  # Nginx reverse proxy (production only)
+  # Uncomment to enable HTTPS/SSL termination and unified access on port 443.
+  # Requires: config/nginx/nginx.conf and SSL certificates.
+  # ---------------------------------------------------------------------------
+  # nginx:
+  #   image: nginx:1.27-alpine
+  #   container_name: ambientct-nginx
+  #   restart: unless-stopped
+  #   ports:
+  #     - "${NGINX_HTTP_PORT:-80}:80"
+  #     - "${NGINX_HTTPS_PORT:-443}:443"
+  #   volumes:
+  #     - ./config/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+  #     - ${SSL_CERT_PATH:-./config/nginx/ssl/cert.pem}:/etc/nginx/ssl/cert.pem:ro
+  #     - ${SSL_KEY_PATH:-./config/nginx/ssl/key.pem}:/etc/nginx/ssl/key.pem:ro
+  #   depends_on:
+  #     viewer:
+  #       condition: service_healthy
+  #     orthanc:
+  #       condition: service_healthy
+  #   networks:
+  #     - pacs-net
+  #   logging:
+  #     driver: json-file
+  #     options:
+  #       max-size: "${LOG_MAX_SIZE:-10m}"
+  #       max-file: "${LOG_MAX_FILE:-3}"
+  #   healthcheck:
+  #     test: ["CMD-SHELL", "curl -f http://localhost:80/ || exit 1"]
+  #     interval: 30s
+  #     timeout: 5s
+  #     retries: 3
 
 volumes:
   orthanc-db:
