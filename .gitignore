@@ -36,3 +36,7 @@ build/
 # === Logs ===
 *.log
 logs/
+
+# === Extension Build Artifacts ===
+extensions/dental-tools/node_modules/
+extensions/dental-tools/dist/
