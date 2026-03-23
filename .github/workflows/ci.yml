@@ -79,8 +79,7 @@ jobs:
       - name: Run smoke tests
         run: |
           chmod +x scripts/smoke-test.sh
-          # Use the password from docker-compose.yml's hardcoded REGISTERED_USERS
-          ORTHANC_PASSWORD=oTan2loAWqd0mG17P2SW ./scripts/smoke-test.sh --verbose
+          ./scripts/smoke-test.sh --verbose
 
       - name: Collect logs on failure
         if: failure()
