@@ -73,6 +73,7 @@ check() {
   fi
 }
 
+# shellcheck disable=SC2329
 warn_check() {
   local name="$1"
   shift

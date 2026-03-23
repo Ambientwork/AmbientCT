@@ -58,7 +58,7 @@ list_backups() {
   echo ""
   echo "Available backups in: $BACKUP_DIR"
   echo ""
-  if ls -1 "$BACKUP_DIR"/ambientct-backup-*.tar.gz 2>/dev/null | head -1 > /dev/null; then
+  if find "$BACKUP_DIR" -maxdepth 1 -name 'ambientct-backup-*.tar.gz' -print -quit 2>/dev/null | grep -q .; then
     local count=0
     while IFS= read -r f; do
       count=$((count + 1))
@@ -67,7 +67,7 @@ list_backups() {
       local name
       name=$(basename "$f")
       echo "  ${count}. ${name}  (${size})"
-    done < <(ls -1t "$BACKUP_DIR"/ambientct-backup-*.tar.gz 2>/dev/null)
+    done < <(find "$BACKUP_DIR" -maxdepth 1 -name 'ambientct-backup-*.tar.gz' -print0 2>/dev/null | xargs -0 ls -1t)
     echo ""
     echo "  Total: ${count} backup(s)"
   else
@@ -119,7 +119,7 @@ do_backup() {
   backup_count=$(find "$BACKUP_DIR" -name 'ambientct-backup-*.tar.gz' -type f | wc -l | tr -d ' ')
   if [ "$backup_count" -gt "$KEEP" ]; then
     local to_delete=$((backup_count - KEEP))
-    ls -1t "$BACKUP_DIR"/ambientct-backup-*.tar.gz | tail -n "$to_delete" | xargs rm -f
+    find "$BACKUP_DIR" -maxdepth 1 -name 'ambientct-backup-*.tar.gz' -print0 | xargs -0 ls -1t | tail -n "$to_delete" | xargs rm -f
     echo "  Cleaned up ${to_delete} old backup(s) (kept last ${KEEP})"
   fi
 
