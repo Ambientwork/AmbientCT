@@ -13,7 +13,8 @@
 const fs = require('fs');
 const path = require('path');
 
-const PKG_PATH = path.resolve(__dirname, '../../platform/app/package.json');
+// When run via Docker (copied to /tmp), cwd is WORKDIR = /build/ohif
+const PKG_PATH = path.resolve(process.cwd(), 'platform/app/package.json');
 
 if (!fs.existsSync(PKG_PATH)) {
   console.error(`[register-packages] ERROR: ${PKG_PATH} not found`);

@@ -19,7 +19,7 @@ FROM node:22-slim AS builder
 WORKDIR /build
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    git ca-certificates \
+    git ca-certificates python3 make g++ \
     && rm -rf /var/lib/apt/lists/*
 
 # Deterministic yarn version
@@ -36,9 +36,10 @@ COPY extensions/dental-cpr/   extensions/dental-cpr/
 COPY extensions/dental-tools/  extensions/dental-tools/
 COPY modes/dental-cpr-mode/    modes/dental-cpr-mode/
 
-# ── Copy registration scripts (no inline heredocs) ────────────────────────────
-COPY scripts/ohif/register-packages.js /tmp/register-packages.js
-COPY scripts/ohif/register-plugins.js  /tmp/register-plugins.js
+# ── Copy build scripts (no inline heredocs) ───────────────────────────────────
+COPY scripts/ohif/register-packages.js  /tmp/register-packages.js
+COPY scripts/ohif/register-plugins.js   /tmp/register-plugins.js
+COPY scripts/ohif/compile-extensions.js /tmp/compile-extensions.js
 
 # Step 1: Register as workspace dependencies in platform/app/package.json
 RUN node /tmp/register-packages.js
@@ -49,13 +50,17 @@ RUN node /tmp/register-plugins.js
 # Step 3: Install all workspace dependencies
 RUN yarn install
 
-# Step 4: If OHIF has a generate-plugin-config script, run it
+# Step 4: Pre-compile dental extensions (JSX/TSX → plain JS)
+#         OHIF's webpack babel-loader doesn't transpile workspace packages.
+RUN node /tmp/compile-extensions.js
+
+# Step 5: If OHIF has a generate-plugin-config script, run it
 #         (regenerates extensionsConfig from pluginConfig.json in some OHIF builds)
 RUN yarn workspace @ohif/app generate-plugin-config 2>/dev/null && \
     echo "[build] generate-plugin-config ran successfully" || \
     echo "[build] generate-plugin-config not available — using App.tsx patch"
 
-# Step 5: Build OHIF (outputs to platform/app/dist)
+# Step 6: Build OHIF (outputs to platform/app/dist)
 RUN yarn workspace @ohif/app run build
 
 # ── Stage 2: Serve ────────────────────────────────────────────────────────────

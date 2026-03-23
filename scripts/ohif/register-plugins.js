@@ -13,7 +13,8 @@
  *   does not auto-run. Uses anchor-based insertion (not line numbers) so
  *   it survives minor App.tsx refactors.
  *
- * Both steps are safe to skip if already applied.
+ * Step B is non-fatal when Step A succeeds — pluginConfig.json is the
+ * primary registration path for OHIF v3.9+.
  */
 'use strict';
 
@@ -22,7 +23,10 @@ const path = require('path');
 
 // ── Step A: pluginConfig.json ─────────────────────────────────────────────────
 
-const PLUGIN_CFG = path.resolve(__dirname, '../../platform/app/pluginConfig.json');
+// When run via Docker (copied to /tmp), cwd is WORKDIR = /build/ohif
+const PLUGIN_CFG = path.resolve(process.cwd(), 'platform/app/pluginConfig.json');
+
+let stepAOk = false;
 
 if (fs.existsSync(PLUGIN_CFG)) {
   const cfg = JSON.parse(fs.readFileSync(PLUGIN_CFG, 'utf8'));
@@ -58,17 +62,24 @@ if (fs.existsSync(PLUGIN_CFG)) {
   } else {
     console.log('[register-plugins] pluginConfig.json already up to date');
   }
+  stepAOk = true;
 } else {
   console.warn('[register-plugins] pluginConfig.json not found — skipping Step A');
 }
 
+// If Step A succeeded, Step B is a fallback — failures are warnings, not fatal.
+// If Step A failed (no pluginConfig.json), Step B is the only path and is fatal.
+const stepBFatal = !stepAOk;
+
 // ── Step B: App.tsx patch ─────────────────────────────────────────────────────
 
-const APP_TSX = path.resolve(__dirname, '../../platform/app/src/App.tsx');
+const APP_TSX = path.resolve(process.cwd(), 'platform/app/src/App.tsx');
 
 if (!fs.existsSync(APP_TSX)) {
-  console.error('[register-plugins] FATAL: App.tsx not found at', APP_TSX);
-  process.exit(1);
+  const msg = `[register-plugins] App.tsx not found at ${APP_TSX}`;
+  if (stepBFatal) { console.error(msg); process.exit(1); }
+  console.warn(msg + ' — skipping Step B (pluginConfig.json registration is active)');
+  process.exit(0);
 }
 
 let src = fs.readFileSync(APP_TSX, 'utf8');
@@ -82,8 +93,10 @@ if (src.includes('@ambientwork/ohif-extension-dental-cpr')) {
 // ── Insert import statements after the last @ohif/extension-* import ──────────
 const importAnchor = src.lastIndexOf("from '@ohif/extension-");
 if (importAnchor === -1) {
-  console.error('[register-plugins] FATAL: No @ohif/extension-* import found in App.tsx');
-  process.exit(1);
+  const msg = '[register-plugins] No @ohif/extension-* import found in App.tsx — skipping Step B';
+  if (stepBFatal) { console.error('[register-plugins] FATAL: ' + msg.split('— ')[1]); process.exit(1); }
+  console.warn(msg + ' (pluginConfig.json registration is active)');
+  process.exit(0);
 }
 const importLineEnd = src.indexOf('\n', importAnchor);
 
@@ -101,8 +114,10 @@ src =
 // ── Append to extensions array ────────────────────────────────────────────────
 const knownExt = src.indexOf('OHIFDefaultExtension');
 if (knownExt === -1) {
-  console.error('[register-plugins] FATAL: Could not locate extensions array in App.tsx');
-  process.exit(1);
+  const msg = '[register-plugins] Could not locate extensions array in App.tsx — skipping Step B';
+  if (stepBFatal) { console.error('[register-plugins] FATAL: ' + msg.split('— ')[1]); process.exit(1); }
+  console.warn(msg + ' (pluginConfig.json registration is active)');
+  process.exit(0);
 }
 const extArrayEnd = src.indexOf(']', knownExt);
 src =
@@ -123,7 +138,7 @@ if (knownMode !== -1) {
     ',\n    DentalCPRMode' +
     src.slice(modeArrayEnd);
 } else {
-  console.warn('[register-plugins] WARNING: Could not locate modes array — DentalCPRMode not registered');
+  console.warn('[register-plugins] WARNING: Could not locate modes array — DentalCPRMode not registered via App.tsx');
 }
 
 fs.writeFileSync(APP_TSX, src);
