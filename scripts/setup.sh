@@ -2,81 +2,200 @@
 set -euo pipefail
 
 # AmbientCT Setup Wizard
-# Run this once before your first `docker compose up`.
-# Usage: ./scripts/setup.sh
+# Checks prerequisites, generates .env with secure credentials, pulls Docker images.
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+# Defaults
+INTERACTIVE=true
+ORTHANC_USER="admin"
+ORTHANC_HTTP_PORT=8042
+ORTHANC_DICOM_PORT=4242
+VIEWER_PORT=3000
+
+usage() {
+  cat <<'EOF'
+Usage: ./scripts/setup.sh [OPTIONS]
+
+First-time setup wizard for AmbientCT. Checks Docker, generates .env
+with secure credentials, and pulls container images.
+
+Options:
+  -h, --help             Show this help message
+  -n, --non-interactive  Skip interactive prompts, use defaults
+  -u, --user NAME        Orthanc admin username (default: admin)
+  --http-port PORT       Orthanc HTTP port (default: 8042)
+  --dicom-port PORT      Orthanc DICOM port (default: 4242)
+  --viewer-port PORT     OHIF Viewer port (default: 3000)
+
+Examples:
+  ./scripts/setup.sh                        # Interactive wizard
+  ./scripts/setup.sh --non-interactive      # CI/automated setup
+  ./scripts/setup.sh -u doctor --http-port 9042
+EOF
+  exit 0
+}
+
+# Parse arguments
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -h|--help) usage ;;
+    -n|--non-interactive) INTERACTIVE=false; shift ;;
+    -u|--user) ORTHANC_USER="$2"; shift 2 ;;
+    --http-port) ORTHANC_HTTP_PORT="$2"; shift 2 ;;
+    --dicom-port) ORTHANC_DICOM_PORT="$2"; shift 2 ;;
+    --viewer-port) VIEWER_PORT="$2"; shift 2 ;;
+    *) echo "Unknown option: $1"; echo "Run with --help for usage."; exit 1 ;;
+  esac
+done
+
+prompt() {
+  local varname="$1" prompt_text="$2" default="$3"
+  if [[ "$INTERACTIVE" == "true" ]]; then
+    read -r -p "$prompt_text [$default]: " input
+    eval "$varname=\"${input:-$default}\""
+  else
+    eval "$varname=\"$default\""
+  fi
+}
+
+generate_password() {
+  openssl rand -base64 24 | tr -dc 'a-zA-Z0-9' | head -c 24
+}
 
 echo ""
-echo "🦷 AmbientCT Setup"
-echo "==================="
+echo "==============================="
+echo "  AmbientCT Setup Wizard"
+echo "==============================="
 echo ""
 
-# Check Docker
+# --- Step 1: Check Docker ---
+echo "Step 1/4: Checking prerequisites..."
+echo ""
+
 if ! command -v docker &> /dev/null; then
-  echo "❌ Docker is not installed."
-  echo "   Install Docker Desktop: https://www.docker.com/products/docker-desktop/"
+  echo "ERROR: Docker is not installed."
+  echo "  Install Docker Desktop: https://www.docker.com/products/docker-desktop/"
   exit 1
 fi
-echo "✅ Docker found: $(docker --version | head -1)"
+echo "  [OK] Docker found: $(docker --version | head -1)"
 
 if ! docker info > /dev/null 2>&1; then
-  echo "❌ Docker is not running. Please start Docker Desktop."
+  echo "ERROR: Docker is not running. Please start Docker Desktop."
   exit 1
 fi
-echo "✅ Docker is running"
+echo "  [OK] Docker daemon is running"
+
+if ! command -v curl &> /dev/null; then
+  echo "ERROR: curl is not installed."
+  exit 1
+fi
+echo "  [OK] curl found"
+echo ""
+
+# --- Step 2: Interactive configuration ---
+echo "Step 2/4: Configuration..."
+echo ""
+
+if [[ "$INTERACTIVE" == "true" ]]; then
+  prompt ORTHANC_USER "Orthanc admin username" "$ORTHANC_USER"
+  prompt ORTHANC_HTTP_PORT "Orthanc HTTP port" "$ORTHANC_HTTP_PORT"
+  prompt ORTHANC_DICOM_PORT "Orthanc DICOM port" "$ORTHANC_DICOM_PORT"
+  prompt VIEWER_PORT "OHIF Viewer port" "$VIEWER_PORT"
+  echo ""
+fi
 
 # Check ports
-for PORT in 8042 3000 4242; do
+for PORT in $ORTHANC_HTTP_PORT $ORTHANC_DICOM_PORT $VIEWER_PORT; do
   if lsof -i ":$PORT" > /dev/null 2>&1; then
-    echo "⚠️  Port $PORT is already in use."
-    echo "   Stop the service using it, or change the port in .env"
+    echo "  WARNING: Port $PORT is already in use."
   fi
 done
 
-# Create .env if not exists
-if [ ! -f .env ]; then
-  echo ""
-  echo "Creating .env from template..."
-  cp .env.example .env
+# --- Step 3: Generate .env ---
+echo "Step 3/4: Generating configuration..."
+echo ""
 
-  # Generate random password
-  RANDOM_PW=$(openssl rand -base64 16 | tr -dc 'a-zA-Z0-9' | head -c 20)
-  if [[ "$OSTYPE" == "darwin"* ]]; then
-    sed -i '' "s/changeme-on-first-run/${RANDOM_PW}/" .env
+cd "$PROJECT_DIR"
+
+if [ -f .env ]; then
+  if [[ "$INTERACTIVE" == "true" ]]; then
+    read -r -p "  .env already exists. Overwrite? [y/N]: " overwrite
+    if [[ ! "$overwrite" =~ ^[Yy]$ ]]; then
+      echo "  Keeping existing .env"
+      echo ""
+    else
+      OVERWRITE=true
+    fi
   else
-    sed -i "s/changeme-on-first-run/${RANDOM_PW}/" .env
+    echo "  .env already exists, skipping (use interactive mode to overwrite)"
+    echo ""
   fi
-  echo "✅ .env created with secure password"
+fi
+
+if [ ! -f .env ] || [[ "${OVERWRITE:-}" == "true" ]]; then
+  if [ ! -f .env.example ]; then
+    echo "ERROR: .env.example not found in $PROJECT_DIR"
+    exit 1
+  fi
+
+  ORTHANC_PASSWORD="$(generate_password)"
+
+  cat > .env <<ENVEOF
+# AmbientCT Environment Configuration
+# Generated by setup.sh on $(date +%Y-%m-%d)
+
+# === Orthanc PACS Server ===
+ORTHANC_HTTP_PORT=${ORTHANC_HTTP_PORT}
+ORTHANC_DICOM_PORT=${ORTHANC_DICOM_PORT}
+ORTHANC_USER=${ORTHANC_USER}
+ORTHANC_PASSWORD=${ORTHANC_PASSWORD}
+DICOM_AE_TITLE=DENTALPACS
+
+# === OHIF Viewer ===
+VIEWER_PORT=${VIEWER_PORT}
+ENVEOF
+
+  echo "  [OK] .env created with secure password"
   echo ""
-  echo "   Orthanc Admin Credentials:"
-  echo "   URL:      http://localhost:8042"
-  echo "   Username: admin"
-  echo "   Password: ${RANDOM_PW}"
+  echo "  +-----------------------------------------+"
+  echo "  |  Orthanc Admin Credentials               |"
+  echo "  |  URL:      http://localhost:${ORTHANC_HTTP_PORT}       |"
+  echo "  |  Username: ${ORTHANC_USER}"
+  echo "  |  Password: ${ORTHANC_PASSWORD}"
+  echo "  +-----------------------------------------+"
   echo ""
-  echo "   ⚠️  Save this password! It's in your .env file."
-else
-  echo "✅ .env already exists"
+  echo "  IMPORTANT: Save this password! It is stored in .env"
+  echo ""
 fi
 
 # Create directories
 mkdir -p logs
-echo "✅ Log directory created"
+echo "  [OK] Log directory ready"
 
-# Pull images
+# --- Step 4: Pull images ---
 echo ""
-echo "Pulling Docker images (this may take a few minutes)..."
+echo "Step 4/4: Pulling Docker images..."
+echo ""
 docker compose pull
-echo "✅ Images ready"
+echo ""
+echo "  [OK] Images ready"
 
 echo ""
-echo "==================="
-echo "✅ Setup complete!"
+echo "==============================="
+echo "  Setup complete!"
+echo "==============================="
 echo ""
 echo "Next steps:"
 echo "  1. docker compose up -d"
-echo "  2. Open http://localhost:3000 (OHIF Viewer)"
-echo "  3. Open http://localhost:8042 (Orthanc Admin)"
+echo "  2. Open http://localhost:${VIEWER_PORT} (OHIF Viewer)"
+echo "  3. Open http://localhost:${ORTHANC_HTTP_PORT} (Orthanc Admin)"
 echo "  4. Upload DICOM files via drag & drop in OHIF"
 echo ""
-echo "Run smoke test:  ./scripts/smoke-test.sh"
-echo "Stop everything: docker compose down"
+echo "Useful commands:"
+echo "  ./scripts/smoke-test.sh       Verify everything works"
+echo "  ./scripts/import-dicom.sh     Bulk-import DICOM files"
+echo "  ./scripts/backup.sh           Backup patient data"
+echo "  docker compose down           Stop everything"
 echo ""

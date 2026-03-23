@@ -2,57 +2,164 @@
 set -euo pipefail
 
 # AmbientCT Smoke Test
-# Validates that all services are running and connected.
-# Usage: ./scripts/smoke-test.sh
-# Requires: docker compose stack running, curl
+# Validates that all services are running, healthy, and endpoints are reachable.
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+VERBOSE=false
+PASS=0
+FAIL=0
+WARN=0
+
+usage() {
+  cat <<'EOF'
+Usage: ./scripts/smoke-test.sh [OPTIONS]
+
+Validates that all AmbientCT services are running and endpoints respond.
+Tests Docker containers, Orthanc REST API, DICOMweb, DICOM upload, and OHIF Viewer.
+
+Options:
+  -h, --help      Show this help message
+  -v, --verbose   Show detailed output for each check
+
+Credentials are loaded from .env if present, otherwise uses defaults.
+
+Examples:
+  ./scripts/smoke-test.sh             # Quick pass/fail
+  ./scripts/smoke-test.sh --verbose   # Detailed output per check
+EOF
+  exit 0
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -h|--help) usage ;;
+    -v|--verbose) VERBOSE=true; shift ;;
+    *) echo "Unknown option: $1"; echo "Run with --help for usage."; exit 1 ;;
+  esac
+done
+
+# Load .env if present
+if [ -f "$PROJECT_DIR/.env" ]; then
+  set -a
+  # shellcheck source=/dev/null
+  source "$PROJECT_DIR/.env"
+  set +a
+fi
 
 ORTHANC_URL="http://localhost:${ORTHANC_HTTP_PORT:-8042}"
 VIEWER_URL="http://localhost:${VIEWER_PORT:-3000}"
 ORTHANC_USER="${ORTHANC_USER:-admin}"
 ORTHANC_PASSWORD="${ORTHANC_PASSWORD:-changeme-on-first-run}"
-PASS=0
-FAIL=0
+AUTH="${ORTHANC_USER}:${ORTHANC_PASSWORD}"
 
 check() {
   local name="$1"
-  local cmd="$2"
-  if eval "$cmd" > /dev/null 2>&1; then
-    echo "  ✅ $name"
+  shift
+  local output
+  if output=$("$@" 2>&1); then
+    echo "  [PASS] $name"
+    PASS=$((PASS + 1))
+    if [[ "$VERBOSE" == "true" ]] && [[ -n "$output" ]]; then
+      echo "         $(echo "$output" | head -3)"
+    fi
+  else
+    echo "  [FAIL] $name"
+    FAIL=$((FAIL + 1))
+    if [[ "$VERBOSE" == "true" ]] && [[ -n "$output" ]]; then
+      echo "         $(echo "$output" | head -3)"
+    fi
+  fi
+}
+
+warn_check() {
+  local name="$1"
+  shift
+  local output
+  if output=$("$@" 2>&1); then
+    echo "  [PASS] $name"
     PASS=$((PASS + 1))
   else
-    echo "  ❌ $name"
-    FAIL=$((FAIL + 1))
+    echo "  [WARN] $name"
+    WARN=$((WARN + 1))
+    if [[ "$VERBOSE" == "true" ]] && [[ -n "$output" ]]; then
+      echo "         $(echo "$output" | head -3)"
+    fi
   fi
 }
 
 echo ""
-echo "🦷 AmbientCT Smoke Test"
-echo "========================"
+echo "==============================="
+echo "  AmbientCT Smoke Test"
+echo "==============================="
 echo ""
 
+# --- Docker Containers ---
 echo "Docker containers:"
 check "Orthanc container running" \
-  "docker ps --filter 'name=ambientct-orthanc' --format '{{.Status}}' | grep -q 'Up'"
+  docker ps --filter 'name=ambientct-orthanc' --format '{{.Status}}' \
+  | grep -q 'Up'
 check "OHIF Viewer container running" \
-  "docker ps --filter 'name=ambientct-viewer' --format '{{.Status}}' | grep -q 'Up'"
+  docker ps --filter 'name=ambientct-viewer' --format '{{.Status}}' \
+  | grep -q 'Up'
 
-echo ""
-echo "Orthanc PACS:"
-check "Orthanc HTTP responding" \
-  "curl -sf -u ${ORTHANC_USER}:${ORTHANC_PASSWORD} ${ORTHANC_URL}/system"
-check "Orthanc DICOMweb endpoint" \
-  "curl -sf -u ${ORTHANC_USER}:${ORTHANC_PASSWORD} ${ORTHANC_URL}/dicom-web/studies"
+# Container health
+ORTHANC_HEALTH=$(docker inspect --format='{{.State.Health.Status}}' ambientct-orthanc 2>/dev/null || echo "unknown")
+if [[ "$ORTHANC_HEALTH" == "healthy" ]]; then
+  echo "  [PASS] Orthanc health check: $ORTHANC_HEALTH"
+  PASS=$((PASS + 1))
+else
+  echo "  [WARN] Orthanc health check: $ORTHANC_HEALTH"
+  WARN=$((WARN + 1))
+fi
 
+# --- Orthanc REST API ---
 echo ""
-echo "OHIF Viewer:"
-check "OHIF responding on port" \
-  "curl -sf ${VIEWER_URL} | grep -q 'html'"
+echo "Orthanc PACS (${ORTHANC_URL}):"
+check "GET /system" \
+  curl -sf -u "$AUTH" "${ORTHANC_URL}/system"
+check "GET /patients" \
+  curl -sf -u "$AUTH" "${ORTHANC_URL}/patients"
+check "GET /studies" \
+  curl -sf -u "$AUTH" "${ORTHANC_URL}/studies"
+check "GET /series" \
+  curl -sf -u "$AUTH" "${ORTHANC_URL}/series"
+check "GET /instances" \
+  curl -sf -u "$AUTH" "${ORTHANC_URL}/instances"
+check "GET /modalities" \
+  curl -sf -u "$AUTH" "${ORTHANC_URL}/modalities"
 
+# --- DICOMweb ---
 echo ""
-echo "DICOM Upload Test:"
-# Create a minimal valid DICOM file for testing
+echo "DICOMweb endpoints:"
+check "WADO-RS /dicom-web/studies" \
+  curl -sf -u "$AUTH" "${ORTHANC_URL}/dicom-web/studies"
+check "QIDO-RS /dicom-web/studies (Accept JSON)" \
+  curl -sf -u "$AUTH" -H "Accept: application/dicom+json" "${ORTHANC_URL}/dicom-web/studies"
+
+# --- DICOM DIMSE Port ---
+echo ""
+echo "DICOM network:"
+DICOM_PORT="${ORTHANC_DICOM_PORT:-4242}"
+if nc -z localhost "$DICOM_PORT" 2>/dev/null; then
+  echo "  [PASS] DIMSE port $DICOM_PORT reachable"
+  PASS=$((PASS + 1))
+else
+  echo "  [WARN] DIMSE port $DICOM_PORT not reachable (may be normal if not exposed)"
+  WARN=$((WARN + 1))
+fi
+
+# --- OHIF Viewer ---
+echo ""
+echo "OHIF Viewer (${VIEWER_URL}):"
+check "GET / returns HTML" \
+  bash -c "curl -sf '${VIEWER_URL}' | grep -q 'html'"
+
+# --- DICOM Upload Test ---
+echo ""
+echo "DICOM upload test:"
 TEMP_DCM=$(mktemp /tmp/test-XXXX.dcm)
-# Minimal DICOM preamble (128 bytes) + DICM magic + basic tags
 python3 -c "
 import struct, sys
 # 128-byte preamble + DICM
@@ -75,29 +182,49 @@ sys.stdout.buffer.write(data)
 " > "$TEMP_DCM" 2>/dev/null || true
 
 if [ -s "$TEMP_DCM" ]; then
-  UPLOAD_RESULT=$(curl -sf -u ${ORTHANC_USER}:${ORTHANC_PASSWORD} \
+  UPLOAD_RESULT=$(curl -sf -u "$AUTH" \
     -X POST "${ORTHANC_URL}/instances" \
     --data-binary @"$TEMP_DCM" 2>&1) || UPLOAD_RESULT=""
 
   if echo "$UPLOAD_RESULT" | grep -q '"Status"'; then
-    check "DICOM upload via REST API" "true"
+    echo "  [PASS] DICOM upload via REST API"
+    PASS=$((PASS + 1))
   else
-    check "DICOM upload via REST API" "false"
+    echo "  [FAIL] DICOM upload via REST API"
+    FAIL=$((FAIL + 1))
+    if [[ "$VERBOSE" == "true" ]]; then
+      echo "         Response: $(echo "$UPLOAD_RESULT" | head -1)"
+    fi
   fi
 else
-  echo "  ⚠️  Could not create test DICOM (python3 not available)"
+  echo "  [WARN] Could not create test DICOM (python3 not available)"
+  WARN=$((WARN + 1))
 fi
 rm -f "$TEMP_DCM"
 
+# --- Volume Check ---
 echo ""
-echo "========================"
-echo "  Results: ${PASS} passed, ${FAIL} failed"
+echo "Storage:"
+VOLUME_EXISTS=$(docker volume inspect ambientct_orthanc-db 2>/dev/null && echo "yes" || echo "no")
+if [[ "$VOLUME_EXISTS" == "yes" ]]; then
+  echo "  [PASS] Docker volume ambientct_orthanc-db exists"
+  PASS=$((PASS + 1))
+else
+  echo "  [WARN] Docker volume ambientct_orthanc-db not found"
+  WARN=$((WARN + 1))
+fi
+
+# --- Summary ---
+echo ""
+echo "==============================="
+TOTAL=$((PASS + FAIL + WARN))
+echo "  Results: ${PASS}/${TOTAL} passed, ${FAIL} failed, ${WARN} warnings"
 echo ""
 
 if [ "$FAIL" -gt 0 ]; then
-  echo "  ⚠️  Some checks failed. Run 'docker compose logs' for details."
+  echo "  Some checks failed. Run 'docker compose logs' for details."
   exit 1
 else
-  echo "  🎉 All checks passed!"
+  echo "  All critical checks passed!"
   exit 0
 fi
