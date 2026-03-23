@@ -34,6 +34,7 @@ WORKDIR /build/ohif
 
 # Copy our extension and mode into the OHIF monorepo workspace tree
 COPY extensions/dental-cpr/ extensions/dental-cpr/
+COPY extensions/dental-tools/ extensions/dental-tools/
 COPY modes/dental-cpr-mode/ modes/dental-cpr-mode/
 
 # Register extension + mode as dependencies in platform/app/package.json
@@ -44,8 +45,9 @@ const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
 pkg.dependencies = pkg.dependencies || {};
 pkg.dependencies['@ambientwork/ohif-extension-dental-cpr'] = 'file:../../extensions/dental-cpr';
 pkg.dependencies['@ambientwork/ohif-mode-dental-cpr'] = 'file:../../modes/dental-cpr-mode';
+pkg.dependencies['@ambientwork/ohif-extension-dental-tools'] = 'file:../../extensions/dental-tools';
 fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2));
-console.log('[patch] Registered extension + mode in platform/app/package.json');
+console.log('[patch] Registered extension + mode + dental-tools in platform/app/package.json');
 "
 
 # Patch platform/app/src/App.tsx to import and register the extension + mode.
@@ -72,6 +74,7 @@ if (importAnchor === -1) {
 const dentalImports = [
   "import DentalCPRExtension from '@ambientwork/ohif-extension-dental-cpr';",
   "import DentalCPRMode from '@ambientwork/ohif-mode-dental-cpr';",
+  "import DentalToolsExtension from '@ambientwork/ohif-extension-dental-tools';",
 ].join('\n');
 src = src.slice(0, importLineEnd + 1) + dentalImports + '\n' + src.slice(importLineEnd + 1);
 
@@ -84,15 +87,15 @@ if (!extArrayMatch) {
   const knownExt = src.indexOf('OHIFDefaultExtension');
   if (knownExt !== -1) {
     const arrayEnd = src.indexOf(']', knownExt);
-    src = src.slice(0, arrayEnd) + ',\n    DentalCPRExtension' + src.slice(arrayEnd);
-    console.log('[patch] Appended DentalCPRExtension to extensions array');
+    src = src.slice(0, arrayEnd) + ',\n    DentalCPRExtension,\n    DentalToolsExtension' + src.slice(arrayEnd);
+    console.log('[patch] Appended DentalCPRExtension and DentalToolsExtension to extensions array');
   } else {
     console.warn('[patch] WARNING: Could not locate extensions array — manual edit needed');
   }
 } else {
   src = src.replace(extArrayMatch[0],
-    extArrayMatch[0].slice(0, -2) + ',\n    DentalCPRExtension\n  ]}');
-  console.log('[patch] Appended DentalCPRExtension to extensions array');
+    extArrayMatch[0].slice(0, -2) + ',\n    DentalCPRExtension,\n    DentalToolsExtension\n  ]}');
+  console.log('[patch] Appended DentalCPRExtension and DentalToolsExtension to extensions array');
 }
 
 // --- Modes array ---
