@@ -240,20 +240,31 @@ Für KFO: automatische oder semi-automatische Messung von cephalometrischen Punk
 
 ## Docker Build Status
 
+> **Letzter Build: 2026-03-24 — `webpack 5.94.0 compiled with 14 warnings, 0 errors`**
+> Image: `ambientct/ohif:latest` — 194 MB nginx (OHIF dist)
+
 | Component | Build-Status | Verifiziert |
 |-----------|-------------|-------------|
-| `Dockerfile.ohif` (node:22, pluginConfig.json) | ✅ Geschrieben | 🔄 Build läuft |
-| `scripts/ohif/register-packages.js` | ✅ Geschrieben | — |
-| `scripts/ohif/register-plugins.js` | ✅ Geschrieben | — |
-| DentalCPRViewport (vtkImageCPRMapper) | ✅ TypeScript kompiliert | 🔄 Docker-Build nötig |
-| DentalCrossSectionViewport (vtkImageReslice) | ✅ TypeScript kompiliert | 🔄 Docker-Build nötig |
-| DentalArchSplineTool | ✅ Geschrieben + 6 Tests | ✅ |
-| NerveCanalTool, BoneThicknessTool, etc. | ✅ 17 Tests passing | ✅ |
+| `Dockerfile.ohif` (node:22, pluginConfig.json) | ✅ Gebaut | ✅ 2026-03-24 |
+| `scripts/ohif/register-packages.js` | ✅ Gebaut | ✅ process.cwd() fix |
+| `scripts/ohif/register-plugins.js` | ✅ Gebaut | ✅ non-fatal Step B |
+| `scripts/ohif/compile-extensions.js` | ✅ Gebaut | ✅ JSX/TSX → ESM |
+| DentalCPRViewport (vtkImageCPRMapper) | ✅ Webpack-Build OK | ⚠️ Runtime nicht verifiziert |
+| DentalCrossSectionViewport (vtkImageReslice) | ✅ Webpack-Build OK | ⚠️ Runtime nicht verifiziert |
+| DentalArchSplineTool | ✅ 6 Tests + Webpack OK | ✅ |
+| NerveCanalTool, BoneThicknessTool, etc. | ✅ 17 Tests + Webpack OK | ✅ |
+| Hanging Protocol (3-Panel CBCT) | ✅ Webpack-Build OK | ⚠️ Runtime nicht verifiziert |
 
-**Bekannte offene Punkte (nach erstem Docker Build prüfen):**
-- `vtkImageReslice` Importpfad: `@kitware/vtk.js/Imaging/Core/ImageReslice` — muss in vtk.js ≥29 verifiziert werden
-- `pluginConfig.json` generate-script Name in OHIF v3.9.2 — Fallback zu App.tsx-Patch ist implementiert
-- `getHeight()` auf vtkImageCPRMapper — optionaler Aufruf mit `?.()`, kein Build-Blocker
+**Build-Fixes (2026-03-24):**
+- `ca-certificates` + `python3 make g++` — SSL + node-gyp native modules
+- `process.cwd()` statt `__dirname` in Registrierungs-Scripts (Docker `/tmp` Copy)
+- `compile-extensions.js` — Babel pre-compilation mit `modules: false` (ESM erhalten)
+  → OHIF's webpack babel-loader excludes workspace symlinks; pre-compile löst das
+
+**Bekannte offene Punkte (Runtime-Verifikation):**
+- `vtkImageReslice` Importpfad: `@kitware/vtk.js/Imaging/Core/ImageReslice` — nur Webpack-Build OK, Runtime-Test mit echten CBCT-Daten steht aus
+- DentalCPRViewport + vtkImageCPRMapper: Webpack-Build OK, vtk.js Runtime-Bindung zu verifizieren
+- Hanging Protocol 3-Panel-Layout: Webpack-Build OK, OHIF-Layout-Engine Runtime zu testen
 
 ---
 
