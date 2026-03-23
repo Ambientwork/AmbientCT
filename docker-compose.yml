@@ -7,21 +7,23 @@ services:
     mem_limit: 512m
     cpus: 1.0
     ports:
-      - "8042:8042"
-      - "4242:4242"
+      - "${ORTHANC_HTTP_PORT:-8042}:8042"
+      - "${ORTHANC_DICOM_PORT:-4242}:4242"
     environment:
       ORTHANC__NAME: "AmbientCT"
       ORTHANC__AUTHENTICATION_ENABLED: "true"
-      ORTHANC__REGISTERED_USERS: '{"admin": "oTan2loAWqd0mG17P2SW"}'
+      ORTHANC__REGISTERED_USERS: '{"${ORTHANC_USER:-admin}": "${ORTHANC_PASSWORD:-changeme-on-first-run}"}'
       DICOM_WEB_PLUGIN_ENABLED: "true"
       OHIF_PLUGIN_ENABLED: "true"
       ORTHANC__OVERWRITE_INSTANCES: "true"
+      ORTHANC_USER: "${ORTHANC_USER:-admin}"
+      ORTHANC_PASSWORD: "${ORTHANC_PASSWORD:-changeme-on-first-run}"
     volumes:
       - orthanc-db:/var/lib/orthanc/db
     networks:
       - pacs-net
     healthcheck:
-      test: ["CMD-SHELL", "python3 -c \"import urllib.request as r; r.urlopen(r.Request('http://localhost:8042/system', headers={'Authorization':'Basic '+__import__('base64').b64encode(b'admin:oTan2loAWqd0mG17P2SW').decode()}))\" || exit 1"]
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request,base64,os;u=os.environ['ORTHANC_USER'];p=os.environ['ORTHANC_PASSWORD'];urllib.request.urlopen(urllib.request.Request('http://localhost:8042/system',headers={'Authorization':'Basic '+base64.b64encode((u+':'+p).encode()).decode()}))\""]
       interval: 30s
       timeout: 10s
       retries: 5
@@ -35,7 +37,7 @@ services:
     mem_limit: 256m
     cpus: 0.5
     ports:
-      - "3000:80"
+      - "${VIEWER_PORT:-3000}:80"
     depends_on:
       orthanc:
         condition: service_healthy
