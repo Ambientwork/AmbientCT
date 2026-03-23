@@ -1,10 +1,12 @@
 import id from './id';
 import DentalCPRViewport from './viewports/DentalCPRViewport';
+import DentalCrossSectionViewport from './viewports/DentalCrossSectionViewport';
 import { cbctDentalHP } from './hanging-protocols/cbctDentalHP';
 import DentalArchSplineTool from './tools/DentalArchSplineTool';
 
 export { DentalArchSplineTool, ARCH_SPLINE_COMPLETED } from './tools/DentalArchSplineTool';
-export { buildCenterline } from './utils/buildCenterline';
+export { buildCenterline, buildCenterlinePoints } from './utils/buildCenterline';
+export { ARCH_CROSS_SECTION_POSITION } from './viewports/DentalCrossSectionViewport';
 
 /**
  * @ambientwork/ohif-extension-dental-cpr
@@ -37,6 +39,10 @@ const extension = {
       {
         name: 'dentalCPRViewport',
         component: DentalCPRViewport,
+      },
+      {
+        name: 'dentalCrossSectionViewport',
+        component: DentalCrossSectionViewport,
       },
     ];
   },

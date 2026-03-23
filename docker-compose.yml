@@ -50,13 +50,21 @@ services:
       retries: 5
       start_period: 30s
 
+  # ---------------------------------------------------------------------------
+  # viewer: AmbientCT OHIF built from source with dental extensions.
+  # First build: docker compose build viewer  (~10-15 min)
+  # Then start:  docker compose up -d
+  # ---------------------------------------------------------------------------
   viewer:
-    image: ohif/app:${OHIF_VERSION:-v3.9.2}
+    image: ambientct/ohif:latest
+    build:
+      context: .
+      dockerfile: Dockerfile.ohif
     platform: linux/amd64
     container_name: ambientct-viewer
     restart: unless-stopped
-    mem_limit: ${VIEWER_MEM_LIMIT:-256m}
-    cpus: ${VIEWER_CPUS:-0.5}
+    mem_limit: ${VIEWER_MEM_LIMIT:-512m}
+    cpus: ${VIEWER_CPUS:-1.0}
     read_only: true
     security_opt:
       - no-new-privileges:true
@@ -85,30 +93,27 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 15s
+      start_period: 60s
 
   # ---------------------------------------------------------------------------
-  # viewer-custom: OHIF built from source with dental tools extension.
-  # Run `docker compose build viewer-custom` first (~10-15 min), then
-  # replace 'viewer' with 'viewer-custom' in docker-compose.yml to use it.
+  # viewer-stock: Pre-built OHIF image (no dental extensions).
+  # Use for quick testing without a full build:
+  #   docker compose up -d viewer-stock
   # ---------------------------------------------------------------------------
-  viewer-custom:
-    image: ambientct/ohif:latest
-    build:
-      context: .
-      dockerfile: Dockerfile.ohif
+  viewer-stock:
+    image: ohif/app:${OHIF_VERSION:-v3.9.2}
     platform: linux/amd64
-    container_name: ambientct-viewer-custom
+    container_name: ambientct-viewer-stock
     restart: unless-stopped
-    mem_limit: ${VIEWER_MEM_LIMIT:-512m}
-    cpus: ${VIEWER_CPUS:-1.0}
+    mem_limit: ${VIEWER_MEM_LIMIT:-256m}
+    cpus: ${VIEWER_CPUS:-0.5}
     read_only: true
     security_opt:
       - no-new-privileges:true
     cap_drop:
       - ALL
     ports:
-      - "127.0.0.1:${VIEWER_CUSTOM_PORT:-3001}:80"
+      - "127.0.0.1:${VIEWER_STOCK_PORT:-3001}:80"
     depends_on:
       orthanc:
         condition: service_healthy
@@ -130,7 +135,7 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 60s
+      start_period: 15s
 
   # ---------------------------------------------------------------------------
   # Nginx reverse proxy (production only)

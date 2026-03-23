@@ -125,6 +125,65 @@ function cross(a: number[], b: number[], out: number[]): void {
   out[2] = a[0] * b[1] - a[1] * b[0];
 }
 
+// ── Public type for cross-section viewport ────────────────────────────────────
+
+export interface CenterlinePoint {
+  point: [number, number, number];
+  tangent: [number, number, number];
+  normal: [number, number, number];
+  binormal: [number, number, number];
+}
+
+/**
+ * Returns the Frenet-Serret frames for each spline sample as plain JS objects.
+ * Used by DentalCPRViewport to fire cross-section events on canvas click.
+ */
+export function buildCenterlinePoints(
+  controlPoints: Types.Point3[],
+  numSamples = 300
+): CenterlinePoint[] {
+  const splinePts = catmullRomSpline(controlPoints, numSamples);
+  const n = splinePts.length;
+  const result: CenterlinePoint[] = [];
+  let prevN = [0, 0, 1];
+
+  for (let i = 0; i < n; i++) {
+    const iPrev = Math.max(0, i - 1);
+    const iNext = Math.min(n - 1, i + 1);
+
+    const T = [
+      splinePts[iNext][0] - splinePts[iPrev][0],
+      splinePts[iNext][1] - splinePts[iPrev][1],
+      splinePts[iNext][2] - splinePts[iPrev][2],
+    ];
+    normalize(T);
+
+    const N = [0, 0, 0];
+    cross(T, prevN, N);
+    if (normalize(N) < 1e-6) {
+      cross([0, 0, 1], T, N);
+      if (normalize(N) < 1e-6) {
+        cross([0, 1, 0], T, N);
+        normalize(N);
+      }
+    }
+    prevN = [...N];
+
+    const B = [0, 0, 0];
+    cross(T, N, B);
+    normalize(B);
+
+    result.push({
+      point: [...splinePts[i]] as [number, number, number],
+      tangent: [...T] as [number, number, number],
+      normal: [...N] as [number, number, number],
+      binormal: [...B] as [number, number, number],
+    });
+  }
+
+  return result;
+}
+
 /**
  * Build a vtkPolyData centerline ready for vtkImageCPRMapper.
  *

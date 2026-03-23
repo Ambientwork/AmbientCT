@@ -223,16 +223,37 @@ Für KFO: automatische oder semi-automatische Messung von cephalometrischen Punk
 
 ## Zusammenfassung: Aufwand pro Feature
 
-| Feature | Phase | Human | CC+gstack | Machbarkeit |
-|---------|-------|-------|-----------|-------------|
-| Dental CBCT Hanging Protocol | 2 | 2–4 h | 30 min | ✅ Trivial |
-| Nervkanal-Spline-Annotation | 2 | 1–2 Tage | 2–3 h | ✅ Einfach |
-| Knochendicke-Messung | 2 | 1 Tag | 1–2 h | ✅ Einfach |
-| **Panorama CPR Viewport** | **3** | **3–5 Wochen** | **4–8 h** | **⚡ Machbar, kein Shortcut** |
-| Cross-Sectional Slices | 3 | +2–3 Wochen | +2–4 h | ⚡ Baut auf CPR auf |
-| Implantat-Overlay | 4 | 6–12 Wochen | 2–3 Tage | 🔶 Komplex |
-| Nervkanal Auto-Seg | 4 | 3–6 Monate | 3–5 Tage | 🔶 ML-abhängig |
-| Cephalometrie-Landmarks | 4 | 3–6 Monate | 3–5 Tage | 🔶 ML-abhängig |
+| Feature | Phase | Human | CC+gstack | Status |
+|---------|-------|-------|-----------|--------|
+| Dental CBCT Hanging Protocol | 2 | 2–4 h | 30 min | ✅ **Shipped** (cbctDentalHP.ts) |
+| Nervkanal-Spline-Annotation | 2 | 1–2 Tage | 2–3 h | ✅ **Shipped** (NerveCanalTool.js) |
+| Knochendicke-Messung | 2 | 1 Tag | 1–2 h | ✅ **Shipped** (BoneThicknessTool.js) |
+| FDI Zahn-Nummerierung | 2 | 1 Tag | 2 h | ✅ **Shipped** (ToothAnnotationTool.js + fdi.js) |
+| **Panorama CPR Viewport** | **3** | **3–5 Wochen** | **4–8 h** | ✅ **Shipped** (DentalCPRViewport.tsx) |
+| **Cross-Sectional Slices** | **3** | **+2–3 Wochen** | **+2–4 h** | ✅ **Shipped** (DentalCrossSectionViewport.tsx) |
+| **3-Panel Layout** | **3** | 1 Tag | 1 h | ✅ **Shipped** (cbctDentalHP 2×2 grid) |
+| **Custom OHIF Docker Build** | **3** | 3–5 Tage | 2 h | ✅ **Shipped** (Dockerfile.ohif, node:22) |
+| Implantat-Overlay (3D-Zylinder) | 4 | 6–12 Wochen | 2–3 Tage | 🔶 Scaffold (Phase 5 in ImplantPlanningTool.js) |
+| Nervkanal Auto-Seg | 4 | 3–6 Monate | 3–5 Tage | 🔶 Phase 4 |
+| Cephalometrie-Landmarks | 4 | 3–6 Monate | 3–5 Tage | 🔶 Phase 4 |
+| Auto Arch Detection (ML) | 5 | 6–12 Monate | 2–4 Wochen | 🔮 Phase 5 |
+
+## Docker Build Status
+
+| Component | Build-Status | Verifiziert |
+|-----------|-------------|-------------|
+| `Dockerfile.ohif` (node:22, pluginConfig.json) | ✅ Geschrieben | 🔄 Build läuft |
+| `scripts/ohif/register-packages.js` | ✅ Geschrieben | — |
+| `scripts/ohif/register-plugins.js` | ✅ Geschrieben | — |
+| DentalCPRViewport (vtkImageCPRMapper) | ✅ TypeScript kompiliert | 🔄 Docker-Build nötig |
+| DentalCrossSectionViewport (vtkImageReslice) | ✅ TypeScript kompiliert | 🔄 Docker-Build nötig |
+| DentalArchSplineTool | ✅ Geschrieben + 6 Tests | ✅ |
+| NerveCanalTool, BoneThicknessTool, etc. | ✅ 17 Tests passing | ✅ |
+
+**Bekannte offene Punkte (nach erstem Docker Build prüfen):**
+- `vtkImageReslice` Importpfad: `@kitware/vtk.js/Imaging/Core/ImageReslice` — muss in vtk.js ≥29 verifiziert werden
+- `pluginConfig.json` generate-script Name in OHIF v3.9.2 — Fallback zu App.tsx-Patch ist implementiert
+- `getHeight()` auf vtkImageCPRMapper — optionaler Aufruf mit `?.()`, kein Build-Blocker
 
 ---
 

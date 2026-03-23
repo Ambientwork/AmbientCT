@@ -13,8 +13,13 @@ import vtkRenderWindow from '@kitware/vtk.js/Rendering/Core/RenderWindow';
 import vtkRenderWindowInteractor from '@kitware/vtk.js/Rendering/Core/RenderWindowInteractor';
 import vtkOpenGLRenderWindow from '@kitware/vtk.js/Rendering/OpenGL/RenderWindow';
 import { ProjectionMode } from '@kitware/vtk.js/Rendering/Core/ImageCPRMapper/Constants';
-import { buildCenterline } from '../utils/buildCenterline';
+import { buildCenterline, buildCenterlinePoints } from '../utils/buildCenterline';
+import type { CenterlinePoint } from '../utils/buildCenterline';
 import { ARCH_SPLINE_COMPLETED } from '../tools/DentalArchSplineTool';
+import {
+  ARCH_CROSS_SECTION_POSITION,
+} from './DentalCrossSectionViewport';
+import type { CrossSectionEventDetail } from './DentalCrossSectionViewport';
 
 interface DentalCPRViewportProps {
   viewportId: string;
@@ -59,6 +64,9 @@ export default function DentalCPRViewport({
   );
   const [slabMm, setSlabMm] = useState(5);
 
+  // Spline frames stored after each arch completion — used for cross-section clicks
+  const splineFramesRef = useRef<CenterlinePoint[]>([]);
+
   // ── VTK pipeline initialisation ──────────────────────────────────────────
   useEffect(() => {
     const container = vtkContainerRef.current;
@@ -92,8 +100,27 @@ export default function DentalCPRViewport({
     });
     observer.observe(container);
 
+    // Click on panoramic → fire cross-section event for DentalCrossSectionViewport
+    const onCanvasClick = (e: MouseEvent) => {
+      const frames = splineFramesRef.current;
+      if (!frames.length) return;
+      const rect = container.getBoundingClientRect();
+      const xFraction = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+      const splineIndex = Math.round(xFraction * (frames.length - 1));
+      const detail: CrossSectionEventDetail = {
+        frame: frames[splineIndex],
+        splineIndex,
+        numSamples: frames.length,
+      };
+      window.dispatchEvent(
+        new CustomEvent(ARCH_CROSS_SECTION_POSITION, { detail })
+      );
+    };
+    container.addEventListener('click', onCanvasClick);
+
     return () => {
       observer.disconnect();
+      container.removeEventListener('click', onCanvasClick);
       interactor.unbindEvents(container);
       renderWindow.finalize();
       openGLWindow.delete();
@@ -141,8 +168,11 @@ export default function DentalCPRViewport({
       }
 
       try {
+        const NUM_SAMPLES = 300;
         // Build Catmull-Rom centerline polydata (300 samples for smooth panoramic)
-        const centerline = buildCenterline(controlPoints, 300);
+        const centerline = buildCenterline(controlPoints, NUM_SAMPLES);
+        // Also store frames for cross-section click events
+        splineFramesRef.current = buildCenterlinePoints(controlPoints, NUM_SAMPLES);
 
         // Wire vtkImageCPRMapper
         const mapper = vtkImageCPRMapper.newInstance();

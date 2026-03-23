@@ -30,9 +30,11 @@ function modeFactory() {
           id: '@ohif/extension-default.layoutTemplateModule.viewerLayout',
           props: {
             leftPanels: ['@ohif/extension-default.panelModule.seriesList'],
-            rightPanels: [],
+            rightPanels: [
+              '@ambientwork/ohif-extension-dental-tools.panelModule.dentalTools',
+            ],
             viewports: [
-              // Axial CBCT — user draws the dental arch here
+              // Top-left: Axial CBCT — draw the dental arch here
               {
                 namespace:
                   '@ohif/extension-cornerstone.viewportModule.cornerstone',
@@ -40,10 +42,18 @@ function modeFactory() {
                   '@ohif/extension-default.sopClassHandlerModule.stack',
                 ],
               },
-              // Panoramic CPR — shows the curved reconstruction
+              // Top-right: Panoramic CPR — click to select cross-section position
               {
                 namespace:
                   '@ambientwork/ohif-extension-dental-cpr.viewportModule.dentalCPRViewport',
+                displaySetsToDisplay: [
+                  '@ohif/extension-default.sopClassHandlerModule.stack',
+                ],
+              },
+              // Bottom: Perpendicular cross-section at clicked arch position
+              {
+                namespace:
+                  '@ambientwork/ohif-extension-dental-cpr.viewportModule.dentalCrossSectionViewport',
                 displaySetsToDisplay: [
                   '@ohif/extension-default.sopClassHandlerModule.stack',
                 ],

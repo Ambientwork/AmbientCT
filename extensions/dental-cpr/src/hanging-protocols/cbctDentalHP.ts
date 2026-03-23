@@ -1,19 +1,28 @@
 /**
  * Hanging Protocol: cbctDentalCPR
  *
- * Fires when a CT/CBCT study is opened — automatically loads the
- * 2-panel dental layout: Axial view (left) + Panoramic CPR (right).
+ * 3-panel dental layout:
+ *
+ *   ┌──────────────┬──────────────────────────┐
+ *   │              │                          │
+ *   │  Axial CBCT  │   Panoramic CPR          │
+ *   │  (draw arch) │   (click → cross-section)│
+ *   │              │                          │
+ *   ├──────────────┴──────────────────────────┤
+ *   │                                         │
+ *   │   Cross-Section (⊥ to arch)             │
+ *   │                                         │
+ *   └─────────────────────────────────────────┘
  */
 export const cbctDentalHP = {
   id: 'cbctDentalCPR',
   hasUpdatedPriorsInformation: false,
-  name: 'Dental CBCT + Panoramic CPR',
+  name: 'Dental CBCT — 3-panel CPR Layout',
   description:
-    'Two-panel layout for dental CBCT: axial view for arch drawing + CPR panoramic reconstruction',
+    'Three-panel layout: axial (draw arch) + panoramic CPR + perpendicular cross-section',
   createdDate: '2026-03-23',
   modifiedDate: '2026-03-23',
 
-  // Match any study containing CT modality
   protocolMatchingRules: [
     {
       attribute: 'ModalitiesInStudy',
@@ -25,17 +34,17 @@ export const cbctDentalHP = {
   stages: [
     {
       id: 'dentalCPRLayout',
-      name: 'Axial + Panoramic CPR',
+      name: 'Axial + CPR + Cross-Section',
 
       stageActivationCriteria: {},
 
       viewportStructure: {
         layoutType: 'grid',
-        properties: { rows: 1, columns: 2 },
+        properties: { rows: 2, columns: 2 },
       },
 
       viewports: [
-        // ── Left panel: axial CBCT (user draws arch here) ──────────────────
+        // ── Top-left: axial CBCT (draw arch here) ──────────────────────────
         {
           viewportOptions: {
             viewportId: 'cbctAxial',
@@ -46,10 +55,10 @@ export const cbctDentalHP = {
             background: [0, 0, 0],
           },
           displaySets: [{ id: 'ctDisplaySet' }],
-          position: { x: 0, y: 0, width: 0.5, height: 1.0 },
+          position: { x: 0, y: 0, width: 0.5, height: 0.5 },
         },
 
-        // ── Right panel: dental CPR panoramic viewport ──────────────────────
+        // ── Top-right: panoramic CPR ────────────────────────────────────────
         {
           viewportOptions: {
             viewportId: 'dentalCPR',
@@ -59,7 +68,20 @@ export const cbctDentalHP = {
             toolGroupId: 'dentalCPRToolGroup',
           },
           displaySets: [{ id: 'ctDisplaySet' }],
-          position: { x: 0.5, y: 0, width: 0.5, height: 1.0 },
+          position: { x: 0.5, y: 0, width: 0.5, height: 0.5 },
+        },
+
+        // ── Bottom-full: perpendicular cross-section ────────────────────────
+        {
+          viewportOptions: {
+            viewportId: 'dentalCrossSection',
+            viewportType: 'custom',
+            customViewportType:
+              '@ambientwork/ohif-extension-dental-cpr.viewportModule.dentalCrossSectionViewport',
+            toolGroupId: 'dentalCPRToolGroup',
+          },
+          displaySets: [{ id: 'ctDisplaySet' }],
+          position: { x: 0, y: 0.5, width: 1.0, height: 0.5 },
         },
       ],
 
