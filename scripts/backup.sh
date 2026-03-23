@@ -12,6 +12,7 @@ BACKUP_DIR="$HOME/backups/ambientct"
 KEEP=10
 VOLUME_NAME="ambientct_orthanc-db"
 MODE="backup"
+ENCRYPT=false
 
 usage() {
   cat <<'EOF'
@@ -24,12 +25,14 @@ Options:
   -h, --help                Show this help message
   -o, --output-dir DIR      Backup directory (default: ~/backups/ambientct)
   -k, --keep N              Number of backups to retain (default: 10)
+  -e, --encrypt             Encrypt backup with AES-256 (prompts for passphrase)
   -r, --restore FILE        Restore from a backup file
   -l, --list                List available backups
   --volume NAME             Docker volume name (default: ambientct_orthanc-db)
 
 Examples:
   ./scripts/backup.sh                          # Backup with defaults
+  ./scripts/backup.sh --encrypt                # Backup with AES-256 encryption
   ./scripts/backup.sh -o /mnt/nas/backups      # Backup to NAS
   ./scripts/backup.sh --keep 30                # Keep last 30 backups
   ./scripts/backup.sh --list                   # Show available backups
