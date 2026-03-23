@@ -54,14 +54,82 @@ prompt() {
   local varname="$1" prompt_text="$2" default="$3"
   if [[ "$INTERACTIVE" == "true" ]]; then
     read -r -p "$prompt_text [$default]: " input
-    eval "$varname=\"${input:-$default}\""
+    printf -v "$varname" '%s' "${input:-$default}"
   else
-    eval "$varname=\"$default\""
+    printf -v "$varname" '%s' "$default"
   fi
 }
 
 generate_password() {
   openssl rand -base64 24 | tr -dc 'a-zA-Z0-9' | head -c 24
+}
+
+validate_port() {
+  local port="$1" name="$2"
+  if ! [[ "$port" =~ ^[0-9]+$ ]] || [ "$port" -lt 1024 ] || [ "$port" -gt 65535 ]; then
+    echo "ERROR: $name must be a number between 1024 and 65535 (got: $port)"
+    exit 1
+  fi
+}
+
+validate_env() {
+  local env_file="$1"
+  local errors=0
+
+  echo "  Validating .env..."
+
+  # Required variables
+  for var in ORTHANC_USER ORTHANC_PASSWORD ORTHANC_HTTP_PORT ORTHANC_DICOM_PORT VIEWER_PORT; do
+    val=$(grep "^${var}=" "$env_file" 2>/dev/null | head -1 | cut -d'=' -f2-)
+    if [ -z "$val" ]; then
+      echo "  ERROR: Required variable $var is missing or empty in .env"
+      errors=$((errors + 1))
+    fi
+  done
+
+  # Password strength
+  local pw
+  pw=$(grep "^ORTHANC_PASSWORD=" "$env_file" 2>/dev/null | head -1 | cut -d'=' -f2-)
+  if [ -n "$pw" ] && [ "${#pw}" -lt 16 ]; then
+    echo "  ERROR: ORTHANC_PASSWORD must be at least 16 characters (got ${#pw})"
+    errors=$((errors + 1))
+  fi
+  if [ -n "$pw" ]; then
+    case "$pw" in
+      changeme-on-first-run|changeme|password|admin|orthanc)
+        echo "  ERROR: ORTHANC_PASSWORD uses a default/weak value — generate a strong password"
+        errors=$((errors + 1))
+        ;;
+    esac
+  fi
+
+  # Port validation
+  for portvar in ORTHANC_HTTP_PORT ORTHANC_DICOM_PORT VIEWER_PORT; do
+    pval=$(grep "^${portvar}=" "$env_file" 2>/dev/null | head -1 | cut -d'=' -f2-)
+    if [ -n "$pval" ]; then
+      if ! [[ "$pval" =~ ^[0-9]+$ ]] || [ "$pval" -lt 1024 ] || [ "$pval" -gt 65535 ]; then
+        echo "  ERROR: $portvar must be between 1024 and 65535 (got: $pval)"
+        errors=$((errors + 1))
+      fi
+    fi
+  done
+
+  # Port uniqueness
+  local http_port dicom_port viewer_port
+  http_port=$(grep "^ORTHANC_HTTP_PORT=" "$env_file" 2>/dev/null | head -1 | cut -d'=' -f2-)
+  dicom_port=$(grep "^ORTHANC_DICOM_PORT=" "$env_file" 2>/dev/null | head -1 | cut -d'=' -f2-)
+  viewer_port=$(grep "^VIEWER_PORT=" "$env_file" 2>/dev/null | head -1 | cut -d'=' -f2-)
+  if [ "$http_port" = "$dicom_port" ] || [ "$http_port" = "$viewer_port" ] || [ "$dicom_port" = "$viewer_port" ]; then
+    echo "  ERROR: All ports must be unique (HTTP=$http_port, DICOM=$dicom_port, Viewer=$viewer_port)"
+    errors=$((errors + 1))
+  fi
+
+  if [ "$errors" -gt 0 ]; then
+    echo ""
+    echo "  $errors validation error(s) found. Fix .env before running docker compose up."
+    exit 1
+  fi
+  echo "  [OK] .env validated"
 }
 
 echo ""
@@ -106,7 +174,12 @@ if [[ "$INTERACTIVE" == "true" ]]; then
   echo ""
 fi
 
-# Check ports
+# Validate port values before proceeding
+validate_port "$ORTHANC_HTTP_PORT" "ORTHANC_HTTP_PORT"
+validate_port "$ORTHANC_DICOM_PORT" "ORTHANC_DICOM_PORT"
+validate_port "$VIEWER_PORT" "VIEWER_PORT"
+
+# Check port conflicts
 for PORT in $ORTHANC_HTTP_PORT $ORTHANC_DICOM_PORT $VIEWER_PORT; do
   if lsof -i ":$PORT" > /dev/null 2>&1; then
     echo "  WARNING: Port $PORT is already in use."
@@ -169,6 +242,9 @@ ENVEOF
   echo "  IMPORTANT: Save this password! It is stored in .env"
   echo ""
 fi
+
+# Validate the .env file
+validate_env "$PROJECT_DIR/.env"
 
 # Create directories
 mkdir -p logs

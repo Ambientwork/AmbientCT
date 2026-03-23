@@ -4,7 +4,7 @@ window.config = {
   extensions: [],
   modes: [],
   showLoadingIndicator: true,
-  showWarningMessageForCrossOrigin: false,
+  showWarningMessageForCrossOrigin: true,
   showCPUFallbackMessage: true,
   showPinningToolbarMessage: true,
   strictZSpacingForVolumeViewport: true,

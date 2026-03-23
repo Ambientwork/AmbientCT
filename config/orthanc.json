@@ -8,7 +8,7 @@
   "HttpPort": 8042,
   "DicomPort": 4242,
   "DicomAet": "DENTALPACS",
-  "CheckCalledAet": false,
+  "CheckCalledAet": true,
   "RemoteAccessAllowed": true,
   "AuthenticationEnabled": true,
   "DicomCheckModalityHost": false,
