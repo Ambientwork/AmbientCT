@@ -1,4 +1,4 @@
-name: Build and Deploy AmbientCT
+name: CI
 
 on:
   push:
@@ -9,56 +9,83 @@ on:
       - '*.md'
   pull_request:
     branches: [main]
-
-env:
-  REGISTRY: ghcr.io
-  IMAGE_NAME: ambientwork/ambientct
+  workflow_dispatch:
 
 jobs:
-  test:
+  lint:
+    name: Lint & Validate
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Start stack
+      - name: Shellcheck scripts
         run: |
-          cp .env.example .env
-          sed -i 's/changeme-on-first-run/testpassword123/' .env
-          docker compose up -d
-          sleep 15
+          sudo apt-get install -y shellcheck
+          shellcheck scripts/*.sh
+
+      - name: Validate docker-compose.yml
+        run: docker compose config --quiet
+
+      - name: Validate Orthanc config JSON
+        run: python3 -c "import json; json.load(open('config/orthanc.json'))"
+
+  smoke-test:
+    name: Smoke Test (Docker Stack)
+    runs-on: ubuntu-latest
+    needs: lint
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Create .env from example
+        run: cp .env.example .env
+
+      - name: Start stack
+        run: docker compose up -d
+
+      - name: Wait for Orthanc healthy
+        run: |
+          echo "Waiting for Orthanc to become healthy..."
+          for i in $(seq 1 60); do
+            STATUS=$(docker inspect --format='{{.State.Health.Status}}' ambientct-orthanc 2>/dev/null || echo "starting")
+            if [ "$STATUS" = "healthy" ]; then
+              echo "Orthanc is healthy after ~${i}s"
+              break
+            fi
+            if [ "$i" -eq 60 ]; then
+              echo "Timeout waiting for Orthanc"
+              docker compose logs orthanc
+              exit 1
+            fi
+            sleep 1
+          done
+
+      - name: Wait for OHIF Viewer
+        run: |
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:3000 > /dev/null 2>&1; then
+              echo "OHIF Viewer is up after ~${i}s"
+              break
+            fi
+            if [ "$i" -eq 30 ]; then
+              echo "Timeout waiting for OHIF Viewer"
+              docker compose logs viewer
+              exit 1
+            fi
+            sleep 1
+          done
 
       - name: Run smoke tests
         run: |
           chmod +x scripts/smoke-test.sh
-          ORTHANC_PASSWORD=testpassword123 ./scripts/smoke-test.sh
+          # Use the password from docker-compose.yml's hardcoded REGISTERED_USERS
+          ORTHANC_PASSWORD=oTan2loAWqd0mG17P2SW ./scripts/smoke-test.sh --verbose
+
+      - name: Collect logs on failure
+        if: failure()
+        run: |
+          docker compose logs > /tmp/docker-logs.txt 2>&1
+          echo "=== Orthanc ===" && head -100 /tmp/docker-logs.txt
 
       - name: Teardown
         if: always()
         run: docker compose down -v
-
-  build-and-push:
-    needs: test
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Login to ghcr.io
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Build and push Orthanc config image
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          file: Dockerfile.orthanc
-          push: true
-          tags: |
-            ghcr.io/${{ env.IMAGE_NAME }}-orthanc:${{ github.sha }}
-            ghcr.io/${{ env.IMAGE_NAME }}-orthanc:latest
