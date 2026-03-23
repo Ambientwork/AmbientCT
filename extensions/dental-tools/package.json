@@ -2,7 +2,7 @@
   "name": "@ambientwork/ohif-extension-dental-tools",
   "version": "1.0.0",
   "description": "Dental measurement tools for AmbientCT: nerve canal, tooth annotation, bone thickness",
-  "main": "src/index.js",
+  "main": "src/index.jsx",
   "peerDependencies": {
     "@ohif/core": "^3.9.0",
     "@cornerstonejs/core": "^2.0.0",

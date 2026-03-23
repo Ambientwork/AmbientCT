@@ -22,4 +22,4 @@ function estimateBoneThickness(huValues, totalLengthMm, threshold = 400) {
   return { boneThicknessMm, totalLengthMm, bonePercent };
 }
 
-module.exports = { samplePoints, estimateBoneThickness };
+export { samplePoints, estimateBoneThickness };

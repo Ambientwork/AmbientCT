@@ -45,4 +45,4 @@ function getAllTeeth() {
   return teeth;
 }
 
-module.exports = { isValidFDI, getToothInfo, getAllTeeth, POSITION_NAMES, QUADRANT_META };
+export { isValidFDI, getToothInfo, getAllTeeth, POSITION_NAMES, QUADRANT_META };
