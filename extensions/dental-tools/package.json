@@ -1,0 +1,32 @@
+{
+  "name": "@ambientwork/ohif-extension-dental-tools",
+  "version": "1.0.0",
+  "description": "Dental measurement tools for AmbientCT: nerve canal, tooth annotation, bone thickness",
+  "main": "src/index.js",
+  "peerDependencies": {
+    "@ohif/core": "^3.9.0",
+    "@cornerstonejs/core": "^2.0.0",
+    "@cornerstonejs/tools": "^2.0.0",
+    "react": "^18.0.0"
+  },
+  "devDependencies": {
+    "jest": "^29.0.0",
+    "babel-jest": "^29.0.0",
+    "@babel/core": "^7.23.0",
+    "@babel/preset-env": "^7.23.0",
+    "@babel/preset-react": "^7.22.0"
+  },
+  "jest": {
+    "transform": {
+      "^.+\\.(js|jsx)$": ["babel-jest", {
+        "presets": [
+          ["@babel/preset-env", { "targets": { "node": "20" } }],
+          ["@babel/preset-react", { "runtime": "automatic" }]
+        ]
+      }]
+    },
+    "testEnvironment": "node"
+  },
+  "keywords": ["ohif", "dicom", "dental", "cbct", "implant", "fdi"],
+  "license": "MIT"
+}
