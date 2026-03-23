@@ -14,14 +14,16 @@ with 3D volume rendering, MPR, and measurement tools.
 
 </div>
 
+> A dentist built a full PACS server with zero programming background — using AI coding tools.
+> One Docker command. Zero license fees. Patient data stays on your hardware.
+
 ---
 
-## Screenshots
+## Interface
 
-<!-- TODO: Add screenshots -->
-| OHIF Viewer | 3D Volume Rendering | MPR View |
-|:-----------:|:-------------------:|:--------:|
-| *(screenshot)* | *(screenshot)* | *(screenshot)* |
+<div align="center">
+<img src="docs/assets/hero.svg" width="700" alt="AmbientCT DICOM Viewer — patient list, CBCT axial view, dental presets" />
+</div>
 
 ---
 
