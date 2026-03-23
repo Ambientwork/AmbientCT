@@ -1,4 +1,5 @@
 #!/bin/bash
+# shellcheck disable=SC2317
 set -euo pipefail
 
 # AmbientCT Smoke Test
@@ -73,7 +74,6 @@ check() {
   fi
 }
 
-# shellcheck disable=SC2329
 warn_check() {
   local name="$1"
   shift
