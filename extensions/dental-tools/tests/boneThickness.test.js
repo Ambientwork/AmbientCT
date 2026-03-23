@@ -20,3 +20,16 @@ test('estimateBoneThickness returns 0 when all below threshold', () => {
   const result = estimateBoneThickness([100, 200, 300], 15, 400);
   expect(result.boneThicknessMm).toBe(0);
 });
+
+test('estimateBoneThickness returns 0 for all above threshold', () => {
+  const result = estimateBoneThickness([500, 600, 700], 15, 400);
+  expect(result.boneThicknessMm).toBeCloseTo(15, 1);
+  expect(result.bonePercent).toBeCloseTo(100, 0);
+});
+
+test('estimateBoneThickness returns 0 for empty array (no NaN)', () => {
+  const result = estimateBoneThickness([], 10, 400);
+  expect(result.boneThicknessMm).toBe(0);
+  expect(result.bonePercent).toBe(0);
+  expect(result.totalLengthMm).toBe(10);
+});

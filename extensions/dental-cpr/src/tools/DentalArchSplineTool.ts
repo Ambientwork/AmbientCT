@@ -110,6 +110,12 @@ export default class DentalArchSplineTool extends AnnotationTool {
     return newAnnotation as any;
   }
 
+  /** Reset drawing state when the tool is deactivated mid-draw. */
+  onSetToolPassive() {
+    this.isDrawing = false;
+    this.currentAnnotationUID = null;
+  }
+
   /** Double-click finalises the spline and fires the completed event. */
   doubleClickCallback(evt: EventTypes.InteractionEventType) {
     if (!this.isDrawing || !this.currentAnnotationUID) return;

@@ -57,6 +57,12 @@ class NerveCanalTool extends SplineROITool {
         const implantCenter = implantAnn.data?.handles?.points?.[0];
         if (!implantCenter) return;
 
+        // Guard: skip distance line if implant and canal are on different slices.
+        // A cross-slice distance would mix depth (mm) with in-plane distance,
+        // producing a misleading safety margin. 2 mm ≈ 1 typical CBCT slice.
+        const representativePt = canalPoints[0];
+        if (representativePt && Math.abs(implantCenter[2] - representativePt[2]) > 2.0) return;
+
         // Find nearest canal point
         let minDist = Infinity;
         let nearestPt = canalPoints[0];

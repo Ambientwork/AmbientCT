@@ -27,6 +27,12 @@ test('getAllTeeth returns 32 entries', () => {
   expect(getAllTeeth()).toHaveLength(32);
 });
 
+test('getToothInfo returns null for invalid FDI numbers', () => {
+  expect(getToothInfo(0)).toBeNull();
+  expect(getToothInfo(99)).toBeNull();
+  expect(getToothInfo(19)).toBeNull();  // position 9 doesn't exist
+});
+
 test('getAllTeeth has 8 teeth per quadrant', () => {
   const teeth = getAllTeeth();
   [1, 2, 3, 4].forEach(q => {

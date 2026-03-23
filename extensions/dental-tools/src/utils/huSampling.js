@@ -16,6 +16,7 @@ function samplePoints(start, end, n) {
 }
 
 function estimateBoneThickness(huValues, totalLengthMm, threshold = 400) {
+  if (!huValues.length) return { boneThicknessMm: 0, totalLengthMm, bonePercent: 0 };
   const boneCount = huValues.filter(hu => hu > threshold).length;
   const bonePercent = (boneCount / huValues.length) * 100;
   const boneThicknessMm = (bonePercent / 100) * totalLengthMm;

@@ -7,8 +7,9 @@ import type { Types } from '@cornerstonejs/core';
 /**
  * Catmull-Rom spline interpolation through control points.
  * Returns `numSamples` evenly-distributed world-space points along the curve.
+ * Exported for unit testing.
  */
-function catmullRomSpline(
+export function catmullRomSpline(
   controlPoints: Types.Point3[],
   numSamples = 200
 ): Types.Point3[] {
@@ -60,8 +61,9 @@ function catmullRomSpline(
 /**
  * Rotation matrix (columns T, N, B) → quaternion [qx, qy, qz, qw]
  * Uses Shepperd's method for numerical stability.
+ * Exported for unit testing.
  */
-function mat3ToQuat(
+export function mat3ToQuat(
   T: number[],
   N: number[],
   B: number[]

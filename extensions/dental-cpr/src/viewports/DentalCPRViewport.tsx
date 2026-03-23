@@ -206,6 +206,8 @@ export default function DentalCPRViewport({
       renderCPR(controlPoints);
     };
 
+    // TODO(v0.2): if two DentalCPRViewport instances exist simultaneously (split layout),
+    // both will respond to this event. Add viewportId scoping when multi-panel CPR is needed.
     window.addEventListener(ARCH_SPLINE_COMPLETED, handler);
     return () => window.removeEventListener(ARCH_SPLINE_COMPLETED, handler);
   }, [renderCPR]);
