@@ -1,0 +1,19 @@
+{
+  "name": "@ambientwork/ohif-extension-dental-cpr",
+  "version": "0.1.0",
+  "description": "World's first open-source OHIF extension for dental panoramic CPR reconstruction",
+  "main": "src/index.ts",
+  "peerDependencies": {
+    "@ohif/core": "^3.9.0",
+    "@cornerstonejs/core": "^2.0.0",
+    "@cornerstonejs/tools": "^2.0.0",
+    "@kitware/vtk.js": "^29.0.0",
+    "react": "^18.0.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.3.0",
+    "@types/react": "^18.0.0"
+  },
+  "keywords": ["ohif", "dicom", "dental", "cbct", "panoramic", "cpr", "curved-planar-reformation"],
+  "license": "MIT"
+}

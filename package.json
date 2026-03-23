@@ -1,0 +1,10 @@
+{
+  "name": "ambientct-extensions",
+  "private": true,
+  "workspaces": [
+    "extensions/*",
+    "modes/*"
+  ],
+  "packageManager": "yarn@4.0.2",
+  "engines": { "node": ">=20.0.0" }
+}

@@ -88,6 +88,53 @@ services:
       start_period: 15s
 
   # ---------------------------------------------------------------------------
+  # OHIF + Dental CPR Extension (custom build — replaces 'viewer' above)
+  # To use:
+  #   1. Comment out the 'viewer' service above
+  #   2. Uncomment this block
+  #   3. docker compose build viewer-custom   (~10-15 min first run)
+  #      docker compose up -d
+  # ---------------------------------------------------------------------------
+  # viewer-custom:
+  #   build:
+  #     context: .
+  #     dockerfile: Dockerfile.ohif
+  #   platform: linux/amd64
+  #   container_name: ambientct-viewer-custom
+  #   restart: unless-stopped
+  #   mem_limit: ${VIEWER_MEM_LIMIT:-512m}
+  #   cpus: ${VIEWER_CPUS:-1.0}
+  #   read_only: true
+  #   security_opt:
+  #     - no-new-privileges:true
+  #   cap_drop:
+  #     - ALL
+  #   ports:
+  #     - "127.0.0.1:${VIEWER_PORT:-3000}:80"
+  #   depends_on:
+  #     orthanc:
+  #       condition: service_healthy
+  #   volumes:
+  #     - ./config/ohif-config.js:/usr/share/nginx/html/app-config.js:ro
+  #   tmpfs:
+  #     - /tmp:noexec,nosuid,size=32m
+  #     - /var/cache/nginx:noexec,nosuid,size=32m
+  #     - /var/run:noexec,nosuid,size=1m
+  #   networks:
+  #     - pacs-net
+  #   logging:
+  #     driver: json-file
+  #     options:
+  #       max-size: "${LOG_MAX_SIZE:-10m}"
+  #       max-file: "${LOG_MAX_FILE:-3}"
+  #   healthcheck:
+  #     test: ["CMD-SHELL", "curl -f http://localhost:80/ || exit 1"]
+  #     interval: 30s
+  #     timeout: 10s
+  #     retries: 3
+  #     start_period: 60s
+
+  # ---------------------------------------------------------------------------
   # Nginx reverse proxy (production only)
   # Uncomment to enable HTTPS/SSL termination and unified access on port 443.
   # Requires: config/nginx/nginx.conf and SSL certificates.
