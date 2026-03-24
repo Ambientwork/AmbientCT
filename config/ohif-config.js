@@ -62,7 +62,7 @@ window.config = {
     },
   ],
 
-  defaultDataSourceName: 'orthanc-direct',
+  defaultDataSourceName: 'orthanc-dicomweb',
 
   // Customization: dental-optimized upload and viewport overlays
   customizationService: {
