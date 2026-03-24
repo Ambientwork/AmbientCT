@@ -1,0 +1,11 @@
+{
+  "name": "@ambientwork/ohif-mode-dental-cpr",
+  "version": "0.1.0",
+  "description": "OHIF mode: draw dental arch → instant panoramic CPR reconstruction",
+  "main": "src/index.ts",
+  "peerDependencies": {
+    "@ohif/core": "^3.9.0",
+    "@ambientwork/ohif-extension-dental-cpr": "0.1.0"
+  },
+  "license": "MIT"
+}

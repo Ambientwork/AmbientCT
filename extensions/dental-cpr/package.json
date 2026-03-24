@@ -1,0 +1,39 @@
+{
+  "name": "@ambientwork/ohif-extension-dental-cpr",
+  "version": "0.1.0",
+  "description": "World's first open-source OHIF extension for dental panoramic CPR reconstruction",
+  "main": "src/index.ts",
+  "peerDependencies": {
+    "@ohif/core": "^3.9.0",
+    "@cornerstonejs/core": "^2.0.0",
+    "@cornerstonejs/tools": "^2.0.0",
+    "@kitware/vtk.js": "^29.0.0",
+    "react": "^18.0.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.3.0",
+    "@types/react": "^18.0.0",
+    "jest": "^29.0.0",
+    "babel-jest": "^29.0.0",
+    "@babel/core": "^7.23.0",
+    "@babel/preset-env": "^7.23.0",
+    "@babel/preset-typescript": "^7.23.0"
+  },
+  "jest": {
+    "transform": {
+      "^.+\\.(ts|tsx)$": ["babel-jest", {
+        "presets": [
+          ["@babel/preset-env", { "targets": { "node": "20" } }],
+          "@babel/preset-typescript"
+        ]
+      }]
+    },
+    "testEnvironment": "node",
+    "moduleNameMapper": {
+      "^@kitware/vtk\\.js/.*$": "<rootDir>/tests/__mocks__/vtk.js",
+      "^@cornerstonejs/.*$": "<rootDir>/tests/__mocks__/cornerstone.js"
+    }
+  },
+  "keywords": ["ohif", "dicom", "dental", "cbct", "panoramic", "cpr", "curved-planar-reformation"],
+  "license": "MIT"
+}

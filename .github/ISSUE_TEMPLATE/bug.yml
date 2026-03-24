@@ -1,7 +1,12 @@
-name: 🐛 Bug Report
+name: Bug Report
 description: Something is not working correctly
 labels: ["bug"]
 body:
+  - type: markdown
+    attributes:
+      value: |
+        > **Patient Data / DSGVO:** Before submitting, ensure your logs and screenshots contain **no patient names, IDs, dates of birth, or any other PHI**. Run `python3 scripts/scrub.py <logfile>` to scrub logs automatically.
+
   - type: textarea
     id: steps
     attributes:
@@ -13,23 +18,50 @@ body:
         4. ...
     validations:
       required: true
+
   - type: textarea
     id: expected
     attributes:
       label: Expected behavior
       placeholder: What should happen?
+
   - type: textarea
     id: actual
     attributes:
       label: Actual behavior
       placeholder: What happens instead?
+
   - type: textarea
     id: logs
     attributes:
-      label: Logs
-      description: "⚠️ Run `python3 scripts/scrub.py` on logs BEFORE pasting!"
+      label: Logs (scrubbed)
       placeholder: Paste relevant logs here (scrubbed of patient data)
       render: shell
+
+  - type: input
+    id: ambientct_version
+    attributes:
+      label: AmbientCT Version
+      placeholder: "Run: cat VERSION  — e.g. 1.0.0"
+
+  - type: input
+    id: docker_version
+    attributes:
+      label: Docker Version
+      placeholder: "Run: docker --version"
+
+  - type: input
+    id: compose_version
+    attributes:
+      label: Docker Compose Version
+      placeholder: "Run: docker compose version"
+
+  - type: input
+    id: browser
+    attributes:
+      label: Browser
+      placeholder: "e.g. Chrome 123 / macOS 14.4"
+
   - type: input
     id: os
     attributes:

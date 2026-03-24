@@ -48,10 +48,16 @@
   "StorageAccessOnFind": "Never",
 
   "HttpVerbose": false,
+
   "DicomAlwaysAllowEcho": true,
   "DicomAlwaysAllowFind": false,
   "DicomAlwaysAllowFindWorklist": false,
   "DicomAlwaysAllowGet": false,
   "DicomAlwaysAllowMove": false,
-  "DicomAlwaysAllowStore": true
+  "DicomAlwaysAllowStore": true,
+
+  "ExecuteLuaEnabled": false,
+  "RestApiWriteToFileSystemEnabled": false,
+
+  "AllowedOrigins": []
 }

@@ -6,9 +6,14 @@ services:
     restart: unless-stopped
     mem_limit: ${ORTHANC_MEM_LIMIT:-512m}
     cpus: ${ORTHANC_CPUS:-1.0}
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     ports:
       - "127.0.0.1:${ORTHANC_HTTP_PORT:-8042}:8042"
-      - "${ORTHANC_DICOM_PORT:-4242}:4242"
+      - "127.0.0.1:${ORTHANC_DICOM_PORT:-4242}:4242"
     environment:
       ORTHANC__NAME: "${ORTHANC_INSTANCE_NAME:-AmbientCT}"
       ORTHANC__AUTHENTICATION_ENABLED: "true"
@@ -28,6 +33,9 @@ services:
     volumes:
       - orthanc-db:/var/lib/orthanc/db
       - ./config/orthanc.json:/etc/orthanc/orthanc.json:ro
+    tmpfs:
+      - /tmp:noexec,nosuid,size=64m
+      - /var/run:noexec,nosuid,size=1m
     networks:
       - pacs-net
     logging:
@@ -42,13 +50,26 @@ services:
       retries: 5
       start_period: 30s
 
+  # ---------------------------------------------------------------------------
+  # viewer: AmbientCT OHIF built from source with dental extensions.
+  # First build: docker compose build viewer  (~10-15 min)
+  # Then start:  docker compose up -d
+  # ---------------------------------------------------------------------------
   viewer:
-    image: ohif/app:${OHIF_VERSION:-v3.9.2}
+    image: ambientct/ohif:latest
+    build:
+      context: .
+      dockerfile: Dockerfile.ohif
     platform: linux/amd64
     container_name: ambientct-viewer
     restart: unless-stopped
-    mem_limit: ${VIEWER_MEM_LIMIT:-256m}
-    cpus: ${VIEWER_CPUS:-0.5}
+    mem_limit: ${VIEWER_MEM_LIMIT:-512m}
+    cpus: ${VIEWER_CPUS:-1.0}
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     ports:
       - "127.0.0.1:${VIEWER_PORT:-3000}:80"
     depends_on:
@@ -56,6 +77,52 @@ services:
         condition: service_healthy
     volumes:
       - ./config/ohif-config.js:/usr/share/nginx/html/app-config.js:ro
+    tmpfs:
+      - /tmp:noexec,nosuid,size=32m
+      - /var/cache/nginx:noexec,nosuid,size=32m
+      - /var/run:noexec,nosuid,size=1m
+    networks:
+      - pacs-net
+    logging:
+      driver: json-file
+      options:
+        max-size: "${LOG_MAX_SIZE:-10m}"
+        max-file: "${LOG_MAX_FILE:-3}"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:80/ || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # ---------------------------------------------------------------------------
+  # viewer-stock: Pre-built OHIF image (no dental extensions).
+  # Use for quick testing without a full build:
+  #   docker compose up -d viewer-stock
+  # ---------------------------------------------------------------------------
+  viewer-stock:
+    image: ohif/app:${OHIF_VERSION:-v3.9.2}
+    platform: linux/amd64
+    container_name: ambientct-viewer-stock
+    restart: unless-stopped
+    mem_limit: ${VIEWER_MEM_LIMIT:-256m}
+    cpus: ${VIEWER_CPUS:-0.5}
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    ports:
+      - "127.0.0.1:${VIEWER_STOCK_PORT:-3001}:80"
+    depends_on:
+      orthanc:
+        condition: service_healthy
+    volumes:
+      - ./config/ohif-config.js:/usr/share/nginx/html/app-config.js:ro
+    tmpfs:
+      - /tmp:noexec,nosuid,size=32m
+      - /var/cache/nginx:noexec,nosuid,size=32m
+      - /var/run:noexec,nosuid,size=1m
     networks:
       - pacs-net
     logging:
@@ -79,13 +146,25 @@ services:
   #   image: nginx:1.27-alpine
   #   container_name: ambientct-nginx
   #   restart: unless-stopped
+  #   read_only: true
+  #   security_opt:
+  #     - no-new-privileges:true
+  #   cap_drop:
+  #     - ALL
+  #   cap_add:
+  #     - NET_BIND_SERVICE
   #   ports:
-  #     - "${NGINX_HTTP_PORT:-80}:80"
   #     - "${NGINX_HTTPS_PORT:-443}:443"
+  #     # HTTP only for redirect to HTTPS — no plain HTTP serving
+  #     - "${NGINX_HTTP_PORT:-80}:80"
   #   volumes:
   #     - ./config/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
   #     - ${SSL_CERT_PATH:-./config/nginx/ssl/cert.pem}:/etc/nginx/ssl/cert.pem:ro
   #     - ${SSL_KEY_PATH:-./config/nginx/ssl/key.pem}:/etc/nginx/ssl/key.pem:ro
+  #   tmpfs:
+  #     - /tmp:noexec,nosuid,size=16m
+  #     - /var/cache/nginx:noexec,nosuid,size=32m
+  #     - /var/run:noexec,nosuid,size=1m
   #   depends_on:
   #     viewer:
   #       condition: service_healthy
