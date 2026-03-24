@@ -12,7 +12,7 @@ BACKUP_DIR="$HOME/backups/ambientct"
 KEEP=10
 VOLUME_NAME="ambientct_orthanc-db"
 MODE="backup"
-ENCRYPT=false
+export ENCRYPT=false
 
 usage() {
   cat <<'EOF'

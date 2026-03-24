@@ -1,6 +1,6 @@
 services:
   orthanc:
-    image: orthancteam/orthanc:24.12.2
+    image: orthancteam/orthanc:26.1.0
     platform: linux/amd64
     container_name: ambientct-orthanc
     restart: unless-stopped
