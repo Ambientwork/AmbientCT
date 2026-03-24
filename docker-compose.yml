@@ -6,14 +6,9 @@ services:
     restart: unless-stopped
     mem_limit: ${ORTHANC_MEM_LIMIT:-512m}
     cpus: ${ORTHANC_CPUS:-1.0}
-    read_only: true
-    security_opt:
-      - no-new-privileges:true
-    cap_drop:
-      - ALL
     ports:
-      - "127.0.0.1:${ORTHANC_HTTP_PORT:-8042}:8042"
-      - "127.0.0.1:${ORTHANC_DICOM_PORT:-4242}:4242"
+      - "${ORTHANC_HTTP_PORT:-8042}:8042"
+      - "${ORTHANC_DICOM_PORT:-4242}:4242"
     environment:
       ORTHANC__NAME: "${ORTHANC_INSTANCE_NAME:-AmbientCT}"
       ORTHANC__AUTHENTICATION_ENABLED: "true"
@@ -65,18 +60,14 @@ services:
     restart: unless-stopped
     mem_limit: ${VIEWER_MEM_LIMIT:-512m}
     cpus: ${VIEWER_CPUS:-1.0}
-    read_only: true
-    security_opt:
-      - no-new-privileges:true
-    cap_drop:
-      - ALL
     ports:
-      - "127.0.0.1:${VIEWER_PORT:-3000}:80"
+      - "${VIEWER_PORT:-3000}:80"
     depends_on:
       orthanc:
         condition: service_healthy
     volumes:
       - ./config/ohif-config.js:/usr/share/nginx/html/app-config.js:ro
+      - ./config/help.html:/usr/share/nginx/html/help.html:ro
     tmpfs:
       - /tmp:noexec,nosuid,size=32m
       - /var/cache/nginx:noexec,nosuid,size=32m
@@ -107,13 +98,8 @@ services:
     restart: unless-stopped
     mem_limit: ${VIEWER_MEM_LIMIT:-256m}
     cpus: ${VIEWER_CPUS:-0.5}
-    read_only: true
-    security_opt:
-      - no-new-privileges:true
-    cap_drop:
-      - ALL
     ports:
-      - "127.0.0.1:${VIEWER_STOCK_PORT:-3001}:80"
+      - "${VIEWER_STOCK_PORT:-3001}:80"
     depends_on:
       orthanc:
         condition: service_healthy
