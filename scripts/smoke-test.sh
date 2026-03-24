@@ -99,11 +99,9 @@ echo ""
 # --- Docker Containers ---
 echo "Docker containers:"
 check "Orthanc container running" \
-  docker ps --filter 'name=ambientct-orthanc' --format '{{.Status}}' \
-  | grep -q 'Up'
+  bash -c "docker ps --filter 'name=ambientct-orthanc' --format '{{.Status}}' | grep -q 'Up'"
 check "OHIF Viewer container running" \
-  docker ps --filter 'name=ambientct-viewer' --format '{{.Status}}' \
-  | grep -q 'Up'
+  bash -c "docker ps --filter 'name=ambientct-viewer' --format '{{.Status}}' | grep -q 'Up'"
 
 # Container health
 ORTHANC_HEALTH=$(docker inspect --format='{{.State.Health.Status}}' ambientct-orthanc 2>/dev/null || echo "unknown")
@@ -155,7 +153,7 @@ fi
 echo ""
 echo "OHIF Viewer (${VIEWER_URL}):"
 check "GET / returns HTML" \
-  bash -c "curl -sf '${VIEWER_URL}' | grep -q 'html'"
+  bash -c "curl -sfL '${VIEWER_URL}' | grep -q 'html'"
 
 # --- DICOM Upload Test ---
 echo ""
@@ -206,8 +204,7 @@ rm -f "$TEMP_DCM"
 # --- Volume Check ---
 echo ""
 echo "Storage:"
-VOLUME_EXISTS=$(docker volume inspect ambientct_orthanc-db 2>/dev/null && echo "yes" || echo "no")
-if [[ "$VOLUME_EXISTS" == "yes" ]]; then
+if docker volume inspect ambientct_orthanc-db > /dev/null 2>&1; then
   echo "  [PASS] Docker volume ambientct_orthanc-db exists"
   PASS=$((PASS + 1))
 else
