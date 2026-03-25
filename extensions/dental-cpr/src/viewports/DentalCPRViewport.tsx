@@ -71,6 +71,18 @@ export default function DentalCPRViewport({
   // Cross-section cursor position (0-100 %) — updated on click and on auto-fire
   const [cursorXPct, setCursorXPct] = useState<number | null>(null);
 
+  // Navigate cross-section via slider or arrow keys
+  const navigateArch = useCallback((pct: number) => {
+    const frames = splineFramesRef.current;
+    if (!frames.length) return;
+    const clamped = Math.max(0, Math.min(100, pct));
+    const idx = Math.round((clamped / 100) * (frames.length - 1));
+    setCursorXPct(clamped);
+    window.dispatchEvent(new CustomEvent(ARCH_CROSS_SECTION_POSITION, {
+      detail: { frame: frames[idx], splineIndex: idx, numSamples: frames.length },
+    }));
+  }, []);
+
   // ── VTK pipeline initialisation ──────────────────────────────────────────
   useEffect(() => {
     const container = vtkContainerRef.current;
@@ -392,7 +404,7 @@ export default function DentalCPRViewport({
     [getVolume, slabMm]
   );
 
-  // ── Cursor line: track cross-section position on the panoramic ──────────
+  // ── Cursor line + keyboard navigation ───────────────────────────────────
   useEffect(() => {
     const handler = (evt: Event) => {
       const { splineIndex, numSamples } = (evt as CustomEvent<CrossSectionEventDetail>).detail;
@@ -401,6 +413,16 @@ export default function DentalCPRViewport({
     window.addEventListener(ARCH_CROSS_SECTION_POSITION, handler);
     return () => window.removeEventListener(ARCH_CROSS_SECTION_POSITION, handler);
   }, []);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!splineFramesRef.current.length) return;
+      if (e.key === 'ArrowLeft') { e.preventDefault(); navigateArch((cursorXPct ?? 50) - 2); }
+      if (e.key === 'ArrowRight') { e.preventDefault(); navigateArch((cursorXPct ?? 50) + 2); }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [cursorXPct, navigateArch]);
 
   // ── Listen for completed arch spline ────────────────────────────────────
   useEffect(() => {
@@ -445,7 +467,7 @@ export default function DentalCPRViewport({
         flexDirection: 'column',
         background: '#0a0a0a',
         color: '#eee',
-        fontFamily: 'ui-monospace, monospace',
+        fontFamily: 'system-ui, -apple-system, sans-serif',
         overflow: 'hidden',
       }}
     >
@@ -453,17 +475,17 @@ export default function DentalCPRViewport({
       <div
         style={{
           flexShrink: 0,
-          padding: '5px 12px',
-          background: '#181818',
-          borderBottom: '1px solid #2a2a2a',
+          padding: '6px 12px',
+          background: '#111',
+          borderBottom: '1px solid #222',
           display: 'flex',
           alignItems: 'center',
-          gap: 14,
+          gap: 12,
           fontSize: 12,
         }}
       >
-        <span style={{ color: '#00aaff', fontWeight: 700 }}>
-          🦷 Dental Panoramic CPR
+        <span style={{ color: '#00aaff', fontWeight: 700, letterSpacing: '0.02em' }}>
+          🦷 Panoramic CPR
         </span>
 
         <span
@@ -473,29 +495,58 @@ export default function DentalCPRViewport({
             whiteSpace: 'nowrap',
             overflow: 'hidden',
             textOverflow: 'ellipsis',
+            fontSize: 11,
           }}
         >
           {statusMsg}
         </span>
 
-        {/* Slab thickness slider */}
-        <label
-          style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}
-        >
-          <span style={{ color: '#aaa' }}>Slab</span>
+        {/* Slab thickness */}
+        <label style={{ display: 'flex', alignItems: 'center', gap: 5, flexShrink: 0, color: '#888', fontSize: 11 }}>
+          Slab
           <input
             type="range"
             min={1}
             max={20}
             value={slabMm}
             onChange={e => setSlabMm(Number(e.target.value))}
-            style={{ width: 80, accentColor: '#00aaff' }}
+            style={{ width: 64, accentColor: '#00aaff' }}
           />
-          <span style={{ color: '#fff', minWidth: 34, textAlign: 'right' }}>
-            {slabMm} mm
+          <span style={{ color: '#ccc', minWidth: 30, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
+            {slabMm}mm
           </span>
         </label>
       </div>
+
+      {/* ── Arch navigation slider (shown once arch is drawn) ────────────── */}
+      {status === 'ready' && (
+        <div style={{
+          flexShrink: 0,
+          padding: '4px 12px',
+          background: '#0d0d0d',
+          borderBottom: '1px solid #1a1a1a',
+          display: 'flex',
+          alignItems: 'center',
+          gap: 8,
+          fontSize: 11,
+          color: '#666',
+        }}>
+          <span>◀</span>
+          <input
+            type="range"
+            min={0}
+            max={100}
+            step={0.5}
+            value={cursorXPct ?? 50}
+            onChange={e => navigateArch(Number(e.target.value))}
+            style={{ flex: 1, accentColor: '#00aaff', cursor: 'pointer' }}
+          />
+          <span>▶</span>
+          <span style={{ color: '#555', minWidth: 36, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
+            {Math.round(cursorXPct ?? 50)}%
+          </span>
+        </div>
+      )}
 
       {/* ── VTK WebGL canvas ─────────────────────────────────────────────── */}
       <div

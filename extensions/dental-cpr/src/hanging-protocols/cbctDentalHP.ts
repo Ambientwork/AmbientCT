@@ -92,12 +92,11 @@ export const cbctDentalHP = {
           displaySets: [{ id: 'ctDisplaySet' }],
         },
 
-        // ── Bottom-right: empty slot to complete the 2×2 grid ───────────────
-        // Required: 2 rows × 2 columns = 4 slots; all must be defined to avoid
-        // "No match details for viewport undefined" in HangingProtocolService.
+        // ── Bottom-right: coronal MPR ────────────────────────────────────────
+        // DentalViewRouter renders DentalMPRViewport (vtk.js coronal slice).
         {
           viewportOptions: {
-            viewportId: 'dentalEmpty',
+            viewportId: 'dentalMPR',
             viewportType: 'stack',
             toolGroupId: 'dentalViewsGroup',
             background: [0, 0, 0],

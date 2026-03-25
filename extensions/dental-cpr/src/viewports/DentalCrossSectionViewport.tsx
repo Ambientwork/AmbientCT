@@ -273,7 +273,7 @@ export default function DentalCrossSectionViewport({
         flexDirection: 'column',
         background: '#0a0a0a',
         color: '#eee',
-        fontFamily: 'ui-monospace, monospace',
+        fontFamily: 'system-ui, -apple-system, sans-serif',
         overflow: 'hidden',
       }}
     >
@@ -281,21 +281,21 @@ export default function DentalCrossSectionViewport({
       <div
         style={{
           flexShrink: 0,
-          padding: '5px 12px',
-          background: '#181818',
-          borderBottom: '1px solid #2a2a2a',
+          padding: '6px 12px',
+          background: '#111',
+          borderBottom: '1px solid #222',
           display: 'flex',
           alignItems: 'center',
           gap: 10,
           fontSize: 12,
         }}
       >
-        <span style={{ color: '#00aaff', fontWeight: 700 }}>✚ Cross-Section</span>
-        <span style={{ color: statusColour, flex: 1 }}>
+        <span style={{ color: '#00aaff', fontWeight: 700, letterSpacing: '0.02em' }}>⊥ Cross-Section</span>
+        <span style={{ color: statusColour, flex: 1, fontSize: 11 }}>
           {status === 'idle'
-            ? 'Click on the panoramic to show a perpendicular cross-section.'
+            ? 'Click panoramic or use slider to navigate'
             : status === 'error'
-            ? 'CBCT volume not ready.'
+            ? 'Volume not ready — complete the arch first'
             : positionLabel}
         </span>
       </div>

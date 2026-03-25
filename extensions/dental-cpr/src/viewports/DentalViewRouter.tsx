@@ -1,6 +1,7 @@
 import React from 'react';
 import DentalCPRViewport from './DentalCPRViewport';
 import DentalCrossSectionViewport from './DentalCrossSectionViewport';
+import DentalMPRViewport from './DentalMPRViewport';
 
 /**
  * DentalViewRouter — the single viewport component for all three panes.
@@ -48,7 +49,11 @@ export default function DentalViewRouter(props: any) {
     return <DentalCrossSectionViewport {...props} />;
   }
 
-  if (viewportId === 'dentalEmpty' || !viewportId) {
+  if (viewportId === 'dentalMPR') {
+    return <DentalMPRViewport {...props} />;
+  }
+
+  if (!viewportId) {
     return <div style={{ width: '100%', height: '100%', background: '#050505' }} />;
   }
 
