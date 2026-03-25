@@ -40,3 +40,4 @@ logs/
 # === Extension Build Artifacts ===
 extensions/dental-tools/node_modules/
 extensions/dental-tools/dist/
+.gstack/

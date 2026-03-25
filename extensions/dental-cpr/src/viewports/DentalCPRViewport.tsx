@@ -4,9 +4,10 @@ import React, {
   useCallback,
   useState,
 } from 'react';
-import { cache } from '@cornerstonejs/core';
+import { cache, volumeLoader } from '@cornerstonejs/core';
 import type { Types } from '@cornerstonejs/core';
 import vtkImageCPRMapper from '@kitware/vtk.js/Rendering/Core/ImageCPRMapper';
+import vtkDataArray from '@kitware/vtk.js/Common/Core/DataArray';
 import vtkImageSlice from '@kitware/vtk.js/Rendering/Core/ImageSlice';
 import vtkRenderer from '@kitware/vtk.js/Rendering/Core/Renderer';
 import vtkRenderWindow from '@kitware/vtk.js/Rendering/Core/RenderWindow';
@@ -67,28 +68,52 @@ export default function DentalCPRViewport({
   // Spline frames stored after each arch completion — used for cross-section clicks
   const splineFramesRef = useRef<CenterlinePoint[]>([]);
 
+  // Cross-section cursor position (0-100 %) — updated on click and on auto-fire
+  const [cursorXPct, setCursorXPct] = useState<number | null>(null);
+
   // ── VTK pipeline initialisation ──────────────────────────────────────────
   useEffect(() => {
     const container = vtkContainerRef.current;
     if (!container) return;
 
-    const renderWindow = vtkRenderWindow.newInstance();
-    const renderer = vtkRenderer.newInstance({ background: [0.04, 0.04, 0.04] });
-    renderWindow.addRenderer(renderer);
+    // WebGL availability check — vtk.js will throw if WebGL is absent
+    const testCanvas = document.createElement('canvas');
+    const hasWebGL = !!(testCanvas.getContext('webgl2') || testCanvas.getContext('webgl'));
+    if (!hasWebGL) {
+      setStatus('error');
+      setStatusMsg('WebGL not available in this browser. Use Chrome or Firefox with hardware acceleration enabled.');
+      return;
+    }
 
-    const openGLWindow = vtkOpenGLRenderWindow.newInstance();
-    openGLWindow.setContainer(container);
-    openGLWindow.setSize(container.clientWidth || 700, container.clientHeight || 450);
-    renderWindow.addView(openGLWindow);
+    let renderWindow: ReturnType<typeof vtkRenderWindow.newInstance>;
+    let openGLWindow: ReturnType<typeof vtkOpenGLRenderWindow.newInstance>;
+    let interactor: ReturnType<typeof vtkRenderWindowInteractor.newInstance>;
 
-    const interactor = vtkRenderWindowInteractor.newInstance();
-    interactor.setView(openGLWindow);
-    interactor.initialize();
-    interactor.bindEvents(container);
+    try {
+      renderWindow = vtkRenderWindow.newInstance();
+      const renderer = vtkRenderer.newInstance({ background: [0.04, 0.04, 0.04] });
+      renderWindow.addRenderer(renderer);
 
-    rendererRef.current = renderer;
-    renderWindowRef.current = renderWindow;
-    openGLWindowRef.current = openGLWindow;
+      openGLWindow = vtkOpenGLRenderWindow.newInstance();
+      openGLWindow.setContainer(container);
+      openGLWindow.setSize(container.clientWidth || 700, container.clientHeight || 450);
+      renderWindow.addView(openGLWindow);
+
+      interactor = vtkRenderWindowInteractor.newInstance();
+      interactor.setView(openGLWindow);
+      interactor.initialize();
+      interactor.bindEvents(container);
+
+      rendererRef.current = renderer;
+      renderWindowRef.current = renderWindow;
+      openGLWindowRef.current = openGLWindow;
+    } catch (initErr: unknown) {
+      const msg = initErr instanceof Error ? initErr.message : String(initErr);
+      console.error('[DentalCPR] VTK init error:', initErr);
+      setStatus('error');
+      setStatusMsg(`VTK/WebGL init failed: ${msg}`);
+      return;
+    }
 
     // Resize observer — keep vtk canvas in sync with container
     const observer = new ResizeObserver(entries => {
@@ -121,21 +146,99 @@ export default function DentalCPRViewport({
     return () => {
       observer.disconnect();
       container.removeEventListener('click', onCanvasClick);
-      interactor.unbindEvents(container);
-      renderWindow.finalize();
-      openGLWindow.delete();
+      interactor?.unbindEvents(container);
+      openGLWindow?.delete();
+      renderWindow?.delete();
     };
   }, []);
+
+  // ── Pre-load CBCT volume as soon as displaySets are available ────────────
+  // The axial viewport runs as a Stack viewport (slice-by-slice) and never
+  // creates a vtkImageData. vtkImageCPRMapper needs a full vtkImageData, so
+  // we create and load the volume here explicitly via Cornerstone3D's
+  // volumeLoader. By the time the user finishes drawing the arch (~10–30 s),
+  // the volume is ready.
+  useEffect(() => {
+    const ds = displaySets?.[0];
+    if (!ds) return;
+
+    // Collect imageIds — OHIF stack displaySets expose them as ds.imageIds
+    // (flat string array) or ds.images[].imageId (legacy format).
+    const imageIds: string[] =
+      (ds.imageIds as string[] | undefined) ??
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      ((ds.images as any[] | undefined)?.map((img: any) => img.imageId as string) ?? []);
+
+    if (!imageIds.length) {
+      console.warn('[DentalCPR] No imageIds on displaySet — volume pre-load skipped');
+      return;
+    }
+
+    const volumeId = `cornerstoneStreamingImageVolume:${ds.displaySetInstanceUID}`;
+
+    // Skip if already in cache with imageData
+    const existing = cache.getVolume(volumeId);
+    if (existing?.imageData) {
+      console.log('[DentalCPR] Volume already loaded:', volumeId);
+      return;
+    }
+
+    setStatusMsg('Loading CBCT volume… draw arch when slices appear in axial view.');
+    console.log('[DentalCPR] Pre-loading volume', volumeId, '—', imageIds.length, 'slices');
+
+    volumeLoader
+      .createAndCacheVolume(volumeId, { imageIds })
+      .then((vol: Types.IImageVolume) => {
+        vol.load();
+        console.log('[DentalCPR] Volume streaming started:', volumeId);
+        setStatusMsg(
+          'Click to place control points along the dental arch on the axial view. Double-click to complete.'
+        );
+      })
+      .catch((err: unknown) => {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.warn('[DentalCPR] Volume pre-load failed:', msg);
+        setStatusMsg(
+          'Click to place control points along the dental arch on the axial view. Double-click to complete.'
+        );
+      });
+  }, [displaySets]);
 
   // ── Get volume from Cornerstone3D cache ──────────────────────────────────
   const getVolume = useCallback(() => {
     if (!displaySets?.length) return null;
     const ds = displaySets[0];
-    // Try explicit volumeId first, then derive from displaySetInstanceUID
-    const volumeId =
-      ds.volumeId ??
-      `cornerstoneStreamingImageVolume:${ds.displaySetInstanceUID}`;
-    return cache.getVolume(volumeId);
+
+    // 1. Try explicit volumeId set by 3D SOP class handler (UUID-based)
+    if (ds.volumeId) {
+      const vol = cache.getVolume(ds.volumeId);
+      if (vol) return vol;
+    }
+
+    // 2. Try derived from displaySetInstanceUID (OHIF stack handler)
+    const derivedId = `cornerstoneStreamingImageVolume:${ds.displaySetInstanceUID}`;
+    const volByDerived = cache.getVolume(derivedId);
+    if (volByDerived) return volByDerived;
+
+    // 3. Scan cache for volume whose imageIds reference this SeriesInstanceUID.
+    //    Handles UUID volumeIds generated by the 3D SOP class handler at runtime.
+    const seriesUID: string | undefined = ds.SeriesInstanceUID;
+    if (seriesUID) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const volumeCache = (cache as any)._volumeCache as Map<string, any> | undefined;
+      if (volumeCache) {
+        for (const [, vol] of volumeCache) {
+          if (
+            vol?.metadata?.SeriesInstanceUID === seriesUID ||
+            (vol?.imageIds?.[0] as string | undefined)?.includes(seriesUID)
+          ) {
+            return vol;
+          }
+        }
+      }
+    }
+
+    return null;
   }, [displaySets]);
 
   // ── CPR reconstruction ───────────────────────────────────────────────────
@@ -151,6 +254,27 @@ export default function DentalCPRViewport({
         setStatusMsg('CBCT volume not loaded yet — wait for the series to finish loading.');
         setStatus('error');
         return;
+      }
+
+      // Populate scalars BEFORE renderer check — Cornerstone3D v2+ uses VoxelManager
+      // and does NOT populate vtkImageData scalars. vtkImageCPRMapper needs them.
+      const imgData = volume.imageData;
+      if (imgData && !imgData.getPointData().getScalars() && (volume as any).voxelManager) {
+        try {
+          const rawScalars = (volume as any).voxelManager.getCompleteScalarDataArray();
+          if (rawScalars?.length) {
+            const scalarArr = vtkDataArray.newInstance({
+              name: 'Scalars',
+              values: rawScalars,
+              numberOfComponents: 1,
+            });
+            imgData.getPointData().setScalars(scalarArr);
+            imgData.modified();
+            console.log('[DentalCPR] Populated', rawScalars.length, 'scalars from VoxelManager');
+          }
+        } catch (scalarErr) {
+          console.warn('[DentalCPR] Scalar population failed:', (scalarErr as Error).message);
+        }
       }
 
       const renderer = rendererRef.current;
@@ -172,43 +296,71 @@ export default function DentalCPRViewport({
         // Build Catmull-Rom centerline polydata (300 samples for smooth panoramic)
         const centerline = buildCenterline(controlPoints, NUM_SAMPLES);
         // Also store frames for cross-section click events
-        splineFramesRef.current = buildCenterlinePoints(controlPoints, NUM_SAMPLES);
+        const cprFrames = buildCenterlinePoints(controlPoints, NUM_SAMPLES);
+        splineFramesRef.current = cprFrames;
+
+        // Compute arc length from sampled points (mm)
+        let arcLengthMm = 0;
+        for (let i = 1; i < cprFrames.length; i++) {
+          const [x0, y0, z0] = cprFrames[i - 1].point;
+          const [x1, y1, z1] = cprFrames[i].point;
+          arcLengthMm += Math.sqrt((x1 - x0) ** 2 + (y1 - y0) ** 2 + (z1 - z0) ** 2);
+        }
 
         // Wire vtkImageCPRMapper
         const mapper = vtkImageCPRMapper.newInstance();
-        mapper.setImageData(volume.imageData);      // port 0 — CBCT volume
+        mapper.setImageData(imgData ?? volume.imageData); // port 0 — CBCT volume
         mapper.setCenterlineData(centerline);       // port 1 — arch centerline
 
-        // Straightened CPR = classic panoramic equivalent
+        // Straightened CPR: output is a flat rectangle at Z=0 in local model space.
+        //   X: [0..width=70mm]   = buccal-lingual depth (across teeth)
+        //   Y: [0..arcLength mm] = arc length along dental arch
+        //   Z: 0 (flat image plane)
         mapper.useStraightenedMode();
-        mapper.setWidth(80);                        // 80 mm covers a full dental arch
+        mapper.setWidth(70); // 70 mm covers crown to root apex (model coords = mm for DICOM)
         mapper.setOrientationArrayName('Orientation');
         mapper.setUseUniformOrientation(false);
 
-        // MIP slab for richer panoramic contrast
+        // Our quaternion at each point maps:
+        //   Q * [1,0,0] = N_new = tooth height (Z)  → tangentDirection (image X = width, crown→root)
+        //   Q * [0,1,0] = T    = arch tangent        → normalDirection  (image Y = arc length)
+        //   Q * [0,0,1] = B_new = buccal-lingual     → bitangentDirection (MIP focal trough slab)
+        (mapper as any).setTangentDirection([1, 0, 0]);   // tooth height = width (70mm crown to root)
+        (mapper as any).setBitangentDirection([0, 0, 1]); // buccal-lingual = MIP slab (focal trough)
+        (mapper as any).setNormalDirection([0, 1, 0]);    // arch tangent = arc length
+
+        // MIP slab along tooth height — simulates panoramic focal trough
         mapper.setProjectionSlabThickness(slabMm);
         mapper.setProjectionSlabNumberOfSamples(slabMm * 5 + 1); // must be odd
         mapper.setProjectionMode(ProjectionMode.MAX);
 
         const actor = vtkImageSlice.newInstance();
         actor.setMapper(mapper);
+        // Bone window for dental CBCT (HU -500 to +1500 → W=2000, L=500)
+        actor.getProperty().setColorWindow(2000);
+        actor.getProperty().setColorLevel(500);
 
         renderer.addActor(actor);
-        renderer.resetCamera();
 
-        // Orient the camera to face the CPR output plane.
-        // The CPR plane is placed at world origin; we look along +Z.
-        // Adjust distance based on centerline arc length so it fills the view.
-        const arcLengthMm = mapper.getHeight?.() ?? 150;
+        // The CPR actor lives in local model space at Z=0: X=[0,70], Y=[0,arcLen].
+        // Camera must look along -Z with Y as up. DO NOT use resetCamera() — it
+        // doesn't know about the flat geometry and may place the camera incorrectly.
+        const bounds = actor.getBounds?.() ?? [0, 70, 0, arcLengthMm, 0, 0];
+        const imgW = bounds[1] ?? 70;
+        const imgH = bounds[3] ?? arcLengthMm;
         const camera = renderer.getActiveCamera();
-        camera.setPosition(0, 0, arcLengthMm * 2);
-        camera.setFocalPoint(0, 0, 0);
-        camera.setViewUp(0, 1, 0);
         camera.setParallelProjection(true);
-        camera.setParallelScale(arcLengthMm * 0.6);
-
-        renderer.resetCamera();
+        camera.setFocalPoint(imgW / 2, imgH / 2, 0);
+        camera.setPosition(imgW / 2, imgH / 2, 500);
+        // viewUp=(1,0,0): X-axis (buccal-lingual) points up → arch (Y) runs horizontally
+        camera.setViewUp(1, 0, 0);
+        camera.setParallelScale(Math.max(imgW, imgH) / 2);
+        renderer.resetCameraClippingRange();
         renderWindow.render();
+
+        console.log('[DentalCPR] CPR rendered — arc:', Math.round(arcLengthMm), 'mm',
+          '| actor bounds:', actor.getBounds?.().map((v: number) => v.toFixed(1)).join(','),
+          '| parallelScale:', camera.getParallelScale?.().toFixed(1));
 
         actorRef.current = actor;
         mapperRef.current = mapper;
@@ -216,6 +368,19 @@ export default function DentalCPRViewport({
         setStatusMsg(
           `Panoramic ready — ${Math.round(arcLengthMm)} mm arch length. ` +
           'Draw a new arch to update.'
+        );
+
+        // Auto-fire cross-section at arch midpoint so the bottom-left panel shows
+        // something immediately without requiring a user click
+        const midIdx = Math.floor(cprFrames.length / 2);
+        window.dispatchEvent(
+          new CustomEvent(ARCH_CROSS_SECTION_POSITION, {
+            detail: {
+              frame: cprFrames[midIdx],
+              splineIndex: midIdx,
+              numSamples: cprFrames.length,
+            } as CrossSectionEventDetail,
+          })
         );
       } catch (err: unknown) {
         const message = err instanceof Error ? err.message : String(err);
@@ -226,6 +391,16 @@ export default function DentalCPRViewport({
     },
     [getVolume, slabMm]
   );
+
+  // ── Cursor line: track cross-section position on the panoramic ──────────
+  useEffect(() => {
+    const handler = (evt: Event) => {
+      const { splineIndex, numSamples } = (evt as CustomEvent<CrossSectionEventDetail>).detail;
+      setCursorXPct((splineIndex / Math.max(numSamples - 1, 1)) * 100);
+    };
+    window.addEventListener(ARCH_CROSS_SECTION_POSITION, handler);
+    return () => window.removeEventListener(ARCH_CROSS_SECTION_POSITION, handler);
+  }, []);
 
   // ── Listen for completed arch spline ────────────────────────────────────
   useEffect(() => {
@@ -375,6 +550,23 @@ export default function DentalCPRViewport({
           >
             ⟳ Generating panoramic reconstruction…
           </div>
+        )}
+
+        {/* Cross-section cursor line */}
+        {cursorXPct !== null && (
+          <div
+            style={{
+              position: 'absolute',
+              left: `${cursorXPct}%`,
+              top: 0,
+              bottom: 0,
+              width: 2,
+              background: '#00aaff',
+              opacity: 0.85,
+              pointerEvents: 'none',
+              zIndex: 10,
+            }}
+          />
         )}
       </div>
     </div>

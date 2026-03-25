@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { cache } from '@cornerstonejs/core';
+import vtkDataArray from '@kitware/vtk.js/Common/Core/DataArray';
 import vtkImageReslice from '@kitware/vtk.js/Imaging/Core/ImageReslice';
 import vtkImageMapper from '@kitware/vtk.js/Rendering/Core/ImageMapper';
 import vtkImageSlice from '@kitware/vtk.js/Rendering/Core/ImageSlice';
@@ -63,23 +64,40 @@ export default function DentalCrossSectionViewport({
     const container = containerRef.current;
     if (!container) return;
 
-    const renderWindow = vtkRenderWindow.newInstance();
-    const renderer = vtkRenderer.newInstance({ background: [0.03, 0.03, 0.03] });
-    renderWindow.addRenderer(renderer);
+    const testCanvas = document.createElement('canvas');
+    const hasWebGL = !!(testCanvas.getContext('webgl2') || testCanvas.getContext('webgl'));
+    if (!hasWebGL) {
+      setStatus('error');
+      return;
+    }
 
-    const openGLWindow = vtkOpenGLRenderWindow.newInstance();
-    openGLWindow.setContainer(container);
-    openGLWindow.setSize(container.clientWidth || 350, container.clientHeight || 450);
-    renderWindow.addView(openGLWindow);
+    let renderWindow: ReturnType<typeof vtkRenderWindow.newInstance>;
+    let openGLWindow: ReturnType<typeof vtkOpenGLRenderWindow.newInstance>;
+    let interactor: ReturnType<typeof vtkRenderWindowInteractor.newInstance>;
 
-    const interactor = vtkRenderWindowInteractor.newInstance();
-    interactor.setView(openGLWindow);
-    interactor.initialize();
-    interactor.bindEvents(container);
+    try {
+      renderWindow = vtkRenderWindow.newInstance();
+      const renderer = vtkRenderer.newInstance({ background: [0.03, 0.03, 0.03] });
+      renderWindow.addRenderer(renderer);
 
-    rendererRef.current = renderer;
-    renderWindowRef.current = renderWindow;
-    openGLWindowRef.current = openGLWindow;
+      openGLWindow = vtkOpenGLRenderWindow.newInstance();
+      openGLWindow.setContainer(container);
+      openGLWindow.setSize(container.clientWidth || 350, container.clientHeight || 450);
+      renderWindow.addView(openGLWindow);
+
+      interactor = vtkRenderWindowInteractor.newInstance();
+      interactor.setView(openGLWindow);
+      interactor.initialize();
+      interactor.bindEvents(container);
+
+      rendererRef.current = renderer;
+      renderWindowRef.current = renderWindow;
+      openGLWindowRef.current = openGLWindow;
+    } catch (e) {
+      console.error('[DentalCrossSection] VTK init error:', e);
+      setStatus('error');
+      return;
+    }
 
     const observer = new ResizeObserver(entries => {
       for (const entry of entries) {
@@ -92,9 +110,9 @@ export default function DentalCrossSectionViewport({
 
     return () => {
       observer.disconnect();
-      interactor.unbindEvents(container);
-      renderWindow.finalize();
-      openGLWindow.delete();
+      interactor?.unbindEvents(container);
+      openGLWindow?.delete();
+      renderWindow?.delete();
     };
   }, []);
 
@@ -102,9 +120,36 @@ export default function DentalCrossSectionViewport({
   const getVolume = useCallback(() => {
     if (!displaySets?.length) return null;
     const ds = displaySets[0];
-    const volumeId =
-      ds.volumeId ?? `cornerstoneStreamingImageVolume:${ds.displaySetInstanceUID}`;
-    return cache.getVolume(volumeId);
+
+    // 1. Try explicit volumeId (set by 3D SOP class handler)
+    if (ds.volumeId) {
+      const vol = cache.getVolume(ds.volumeId);
+      if (vol) return vol;
+    }
+
+    // 2. Try derived from displaySetInstanceUID
+    const derivedId = `cornerstoneStreamingImageVolume:${ds.displaySetInstanceUID}`;
+    const volByDerived = cache.getVolume(derivedId);
+    if (volByDerived) return volByDerived;
+
+    // 3. Scan cache for volume whose imageIds reference this SeriesInstanceUID
+    const seriesUID: string | undefined = ds.SeriesInstanceUID;
+    if (seriesUID) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const volumeCache = (cache as any)._volumeCache as Map<string, any> | undefined;
+      if (volumeCache) {
+        for (const [, vol] of volumeCache) {
+          if (
+            vol?.metadata?.SeriesInstanceUID === seriesUID ||
+            (vol?.imageIds?.[0] as string | undefined)?.includes(seriesUID)
+          ) {
+            return vol;
+          }
+        }
+      }
+    }
+
+    return null;
   }, [displaySets]);
 
   // ── Render cross-section at a Frenet frame ──────────────────────────────────
@@ -114,6 +159,26 @@ export default function DentalCrossSectionViewport({
       if (!volume?.imageData) {
         setStatus('error');
         return;
+      }
+
+      // Cornerstone3D v2+ uses VoxelManager — populate scalars before vtk.js reslice reads them
+      const imgData = volume.imageData;
+      if (imgData && !imgData.getPointData().getScalars() && (volume as any).voxelManager) {
+        try {
+          const rawScalars = (volume as any).voxelManager.getCompleteScalarDataArray();
+          if (rawScalars?.length) {
+            const scalarArr = vtkDataArray.newInstance({
+              name: 'Scalars',
+              values: rawScalars,
+              numberOfComponents: 1,
+            });
+            imgData.getPointData().setScalars(scalarArr);
+            imgData.modified();
+            console.log('[DentalCS] Populated', rawScalars.length, 'scalars from VoxelManager');
+          }
+        } catch (scalarErr) {
+          console.warn('[DentalCS] Scalar population failed:', (scalarErr as Error).message);
+        }
       }
 
       const renderer = rendererRef.current;
@@ -126,17 +191,17 @@ export default function DentalCrossSectionViewport({
       let reslice = resliceRef.current;
       if (!reslice) {
         reslice = vtkImageReslice.newInstance();
-        reslice.setInputData(volume.imageData);
+        reslice.setInputData(imgData ?? volume.imageData);
         reslice.setOutputDimensionality(2);
-        reslice.setInterpolationModeToLinear();
+        reslice.setInterpolationMode(1); // 1 = linear (setInterpolationModeToLinear not available in this vtk.js build)
         reslice.setTransformInputSampling(false);
 
-        // 40 mm × 40 mm cross-section at 0.3 mm/pixel
+        // 40 mm × 40 mm cross-section at 0.3 mm/pixel spacing
         const sliceSizeMm = 40;
-        const pixPerMm = 0.3;
-        const halfPx = Math.round(sliceSizeMm / pixPerMm / 2);
+        const mmPerPix = 0.3;
+        const halfPx = Math.round(sliceSizeMm / mmPerPix / 2);
         reslice.setOutputExtent([-halfPx, halfPx, -halfPx, halfPx, 0, 0]);
-        reslice.setOutputSpacing([1 / pixPerMm, 1 / pixPerMm, 1]);
+        reslice.setOutputSpacing([mmPerPix, mmPerPix, 1]);
 
         const mapper = vtkImageMapper.newInstance();
         mapper.setInputConnection(reslice.getOutputPort());
@@ -151,21 +216,30 @@ export default function DentalCrossSectionViewport({
         resliceRef.current = reslice;
         actorRef.current = actor;
       } else {
-        reslice.setInputData(volume.imageData);
+        reslice.setInputData(imgData ?? volume.imageData);
       }
 
-      // Direction cosines: rows = output x/y/z axes in world space
-      // Output x = N (left-right across arch)
-      // Output y = B (superior-inferior)
-      // Output z = T (along arch = slice normal)
-      reslice.setResliceAxesDirectionCosines([
-        N[0], N[1], N[2],
-        B[0], B[1], B[2],
-        T[0], T[1], T[2],
-      ]);
-      reslice.setResliceAxesOrigin(point);
+      // vtkMatrix4x4 in vtk.js is ROW-MAJOR (data[i*4+j] = element[row i][col j]).
+      // setResliceAxes rows 0-2 = direction cosines of output X/Y/Z in world space.
+      // Column 3 (positions 3, 7, 11) = world-space origin of the output image.
+      // Output X = N (buccal-lingual), Y = B (superior-inferior), Z = T (slice normal)
+      (reslice as any).setResliceAxes(new Float64Array([
+        N[0], N[1], N[2], point[0],  // row 0: output X direction = N, origin X
+        B[0], B[1], B[2], point[1],  // row 1: output Y direction = B, origin Y
+        T[0], T[1], T[2], point[2],  // row 2: output Z direction = T, origin Z
+        0,    0,    0,    1,          // row 3: homogeneous
+      ]));
 
-      renderer.resetCamera();
+      // Explicit camera — resetCamera() confuses the flat Z=0 reslice output.
+      // Output extent [-67,67,-67,67,0,0] at 0.3 mm/px → ±20.1 mm in X/Y.
+      // Look from +Z; viewUp=(0,-1,0) → output-Y (B = inferior) appears at bottom.
+      const camera = renderer.getActiveCamera();
+      camera.setParallelProjection(true);
+      camera.setFocalPoint(0, 0, 0);
+      camera.setPosition(0, 0, 500);
+      camera.setViewUp(0, -1, 0);
+      camera.setParallelScale(21);
+      renderer.resetCameraClippingRange();
       renderWindow.render();
 
       setStatus('ready');

@@ -22,6 +22,8 @@ RUN git clone --depth 1 --branch v3.9.2 \
 WORKDIR /ohif
 
 # Copy AmbientCT extensions into the OHIF monorepo workspace
+# NOTE: If source changes are not picked up (cached build), use:
+#   docker compose build --no-cache viewer
 COPY extensions/dental-cpr/  extensions/dental-cpr/
 COPY extensions/dental-tools/ extensions/dental-tools/
 COPY modes/dental-cpr-mode/   modes/dental-cpr-mode/
@@ -51,7 +53,7 @@ RUN yarn workspace @ohif/app run build
 FROM nginx:alpine
 
 COPY --from=builder /ohif/platform/app/dist /usr/share/nginx/html
-COPY config/nginx/ohif.conf /etc/nginx/conf.d/default.conf
+COPY config/nginx/ohif.conf.template /etc/nginx/conf.d/default.conf
 
 EXPOSE 80
 

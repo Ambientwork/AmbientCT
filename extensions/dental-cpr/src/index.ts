@@ -1,6 +1,5 @@
 import id from './id';
-import DentalCPRViewport from './viewports/DentalCPRViewport';
-import DentalCrossSectionViewport from './viewports/DentalCrossSectionViewport';
+import DentalViewRouter from './viewports/DentalViewRouter';
 import { cbctDentalHP } from './hanging-protocols/cbctDentalHP';
 import DentalArchSplineTool from './tools/DentalArchSplineTool';
 
@@ -31,18 +30,16 @@ const extension = {
   },
 
   /**
-   * Returns the custom DentalCPRViewport component.
-   * Referenced as: @ambientwork/ohif-extension-dental-cpr.viewportModule.dentalCPRViewport
+   * Returns the dental view router component.
+   * A single router handles both the panoramic CPR slot and the
+   * cross-section slot — it dispatches by viewportId at render time.
+   * Referenced as: @ambientwork/ohif-extension-dental-cpr.viewportModule.dentalViewRouter
    */
   getViewportModule({ servicesManager, extensionManager }: any) {
     return [
       {
-        name: 'dentalCPRViewport',
-        component: DentalCPRViewport,
-      },
-      {
-        name: 'dentalCrossSectionViewport',
-        component: DentalCrossSectionViewport,
+        name: 'dentalViewRouter',
+        component: DentalViewRouter,
       },
     ];
   },

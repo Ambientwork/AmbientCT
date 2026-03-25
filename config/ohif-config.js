@@ -8,6 +8,10 @@ window.config = {
   showCPUFallbackMessage: true,
   showPinningToolbarMessage: true,
   strictZSpacingForVolumeViewport: true,
+  // Prevent WindowLevelActionMenu from crashing on custom (vtk.js) viewports
+  // that are not registered in Cornerstone's viewport service.
+  // W key and toolbar still work for window/level.
+  addWindowLevelActionMenu: false,
 
   // Data source: Orthanc via DICOMweb
   dataSources: [
@@ -35,40 +39,9 @@ window.config = {
         omitQuotationForMultipartRequest: true,
       },
     },
-    // Dev mode: direct Orthanc connection (no Nginx proxy)
-    {
-      namespace: '@ohif/extension-default.dataSourcesModule.dicomweb',
-      sourceName: 'orthanc-direct',
-      configuration: {
-        friendlyName: 'DentalPACS (Dev)',
-        name: 'orthanc-direct',
-        wadoUriRoot: 'http://localhost:8042/wado',
-        qidoRoot: 'http://localhost:8042/dicom-web',
-        wadoRoot: 'http://localhost:8042/dicom-web',
-        qidoSupportsIncludeField: false,
-        imageRendering: 'wadors',
-        thumbnailRendering: 'wadors',
-        enableStudyLazyLoad: true,
-        supportsFuzzyMatching: false,
-        supportsWildcard: true,
-        staticWado: true,
-        singlepart: 'bulkdata,video',
-        bulkDataURI: {
-          enabled: true,
-          relativeResolution: 'studies',
-        },
-        omitQuotationForMultipartRequest: true,
-      },
-    },
   ],
 
   defaultDataSourceName: 'orthanc-dicomweb',
-
-  // Customization: dental-optimized upload and viewport overlays
-  customizationService: {
-    dicomUploadComponent:
-      '@ohif/extension-cornerstone.customizationModule.cornerstoneDicomUploadComponent',
-  },
 
   // ---------------------------------------------------------------------------
   // Dental-specific Window/Level presets
@@ -111,69 +84,57 @@ window.config = {
     {
       id: 'dental-cbct-mpr',
       name: 'Dental CBCT (MPR)',
-      protocols: [
+      hasUpdatedInitialViewport: false,
+      criteria: [
         {
-          id: 'dental-cbct-mpr',
-          name: 'Dental CBCT (MPR)',
-          hasUpdatedInitialViewport: false,
-          criteria: [
+          attribute: 'ModalitiesInStudy',
+          constraint: { containsAny: ['CT'] },
+        },
+      ],
+      displaySetSelectors: {
+        ctDisplaySet: {
+          seriesMatchingRules: [
             {
-              attribute: 'ModalitiesInStudy',
-              constraint: { containsAny: ['CT'] },
+              attribute: 'Modality',
+              constraint: { equals: { value: 'CT' } },
             },
           ],
-          displaySetSelectors: {
-            ctDisplaySet: {
-              seriesMatchingRules: [
-                {
-                  attribute: 'Modality',
-                  constraint: { equals: 'CT' },
-                },
-              ],
-            },
+        },
+      },
+      stages: [
+        {
+          name: 'MPR',
+          viewportStructure: {
+            layoutType: 'grid',
+            properties: { rows: 1, columns: 3 },
           },
-          stages: [
+          viewports: [
             {
-              name: 'MPR',
-              viewportStructure: {
-                layoutType: 'grid',
-                properties: { rows: 1, columns: 3 },
+              viewportOptions: {
+                viewportId: 'axial',
+                viewportType: 'volume',
+                orientation: 'axial',
+                toolGroupId: 'default',
               },
-              viewports: [
-                {
-                  viewportOptions: {
-                    viewportId: 'axial',
-                    viewportType: 'volume',
-                    orientation: 'axial',
-                    toolGroupId: 'default',
-                  },
-                  displaySets: [
-                    { id: 'ctDisplaySet' },
-                  ],
-                },
-                {
-                  viewportOptions: {
-                    viewportId: 'sagittal',
-                    viewportType: 'volume',
-                    orientation: 'sagittal',
-                    toolGroupId: 'default',
-                  },
-                  displaySets: [
-                    { id: 'ctDisplaySet' },
-                  ],
-                },
-                {
-                  viewportOptions: {
-                    viewportId: 'coronal',
-                    viewportType: 'volume',
-                    orientation: 'coronal',
-                    toolGroupId: 'default',
-                  },
-                  displaySets: [
-                    { id: 'ctDisplaySet' },
-                  ],
-                },
-              ],
+              displaySets: [{ id: 'ctDisplaySet' }],
+            },
+            {
+              viewportOptions: {
+                viewportId: 'sagittal',
+                viewportType: 'volume',
+                orientation: 'sagittal',
+                toolGroupId: 'default',
+              },
+              displaySets: [{ id: 'ctDisplaySet' }],
+            },
+            {
+              viewportOptions: {
+                viewportId: 'coronal',
+                viewportType: 'volume',
+                orientation: 'coronal',
+                toolGroupId: 'default',
+              },
+              displaySets: [{ id: 'ctDisplaySet' }],
             },
           ],
         },
@@ -184,46 +145,38 @@ window.config = {
     {
       id: 'dental-opg-single',
       name: 'Dental OPG / Panoramic',
-      protocols: [
+      hasUpdatedInitialViewport: false,
+      criteria: [
         {
-          id: 'dental-opg-single',
-          name: 'Dental OPG / Panoramic',
-          hasUpdatedInitialViewport: false,
-          criteria: [
+          attribute: 'ModalitiesInStudy',
+          constraint: { containsAny: ['DX', 'CR', 'PX'] },
+        },
+      ],
+      displaySetSelectors: {
+        dxDisplaySet: {
+          seriesMatchingRules: [
             {
-              attribute: 'ModalitiesInStudy',
-              constraint: { containsAny: ['DX', 'CR', 'PX'] },
+              attribute: 'Modality',
+              constraint: { equals: { value: ['DX', 'CR', 'PX'] } },
             },
           ],
-          displaySetSelectors: {
-            dxDisplaySet: {
-              seriesMatchingRules: [
-                {
-                  attribute: 'Modality',
-                  constraint: { equals: { value: ['DX', 'CR', 'PX'] } },
-                },
-              ],
-            },
+        },
+      },
+      stages: [
+        {
+          name: 'Single Viewport',
+          viewportStructure: {
+            layoutType: 'grid',
+            properties: { rows: 1, columns: 1 },
           },
-          stages: [
+          viewports: [
             {
-              name: 'Single Viewport',
-              viewportStructure: {
-                layoutType: 'grid',
-                properties: { rows: 1, columns: 1 },
+              viewportOptions: {
+                viewportId: 'opg',
+                viewportType: 'stack',
+                toolGroupId: 'default',
               },
-              viewports: [
-                {
-                  viewportOptions: {
-                    viewportId: 'opg',
-                    viewportType: 'stack',
-                    toolGroupId: 'default',
-                  },
-                  displaySets: [
-                    { id: 'dxDisplaySet' },
-                  ],
-                },
-              ],
+              displaySets: [{ id: 'dxDisplaySet' }],
             },
           ],
         },
@@ -234,68 +187,46 @@ window.config = {
     {
       id: 'dental-intraoral-grid',
       name: 'Dental Intraoral (Grid)',
-      protocols: [
+      hasUpdatedInitialViewport: false,
+      criteria: [
         {
-          id: 'dental-intraoral-grid',
-          name: 'Dental Intraoral (Grid)',
-          hasUpdatedInitialViewport: false,
-          criteria: [
+          attribute: 'ModalitiesInStudy',
+          constraint: { containsAny: ['IO'] },
+        },
+      ],
+      displaySetSelectors: {
+        ioDisplaySet: {
+          seriesMatchingRules: [
             {
-              attribute: 'ModalitiesInStudy',
-              constraint: { containsAny: ['IO'] },
+              attribute: 'Modality',
+              constraint: { equals: { value: 'IO' } },
             },
           ],
-          displaySetSelectors: {
-            ioDisplaySet: {
-              seriesMatchingRules: [
-                {
-                  attribute: 'Modality',
-                  constraint: { equals: 'IO' },
-                },
-              ],
-            },
+        },
+      },
+      stages: [
+        {
+          name: 'Grid 2x2',
+          viewportStructure: {
+            layoutType: 'grid',
+            properties: { rows: 2, columns: 2 },
           },
-          stages: [
+          viewports: [
             {
-              name: 'Grid 2x2',
-              viewportStructure: {
-                layoutType: 'grid',
-                properties: { rows: 2, columns: 2 },
-              },
-              viewports: [
-                {
-                  viewportOptions: {
-                    viewportId: 'io-1',
-                    viewportType: 'stack',
-                    toolGroupId: 'default',
-                  },
-                  displaySets: [{ id: 'ioDisplaySet' }],
-                },
-                {
-                  viewportOptions: {
-                    viewportId: 'io-2',
-                    viewportType: 'stack',
-                    toolGroupId: 'default',
-                  },
-                  displaySets: [{ id: 'ioDisplaySet' }],
-                },
-                {
-                  viewportOptions: {
-                    viewportId: 'io-3',
-                    viewportType: 'stack',
-                    toolGroupId: 'default',
-                  },
-                  displaySets: [{ id: 'ioDisplaySet' }],
-                },
-                {
-                  viewportOptions: {
-                    viewportId: 'io-4',
-                    viewportType: 'stack',
-                    toolGroupId: 'default',
-                  },
-                  displaySets: [{ id: 'ioDisplaySet' }],
-                },
-              ],
+              viewportOptions: { viewportId: 'io-1', viewportType: 'stack', toolGroupId: 'default' },
+              displaySets: [{ id: 'ioDisplaySet' }],
+            },
+            {
+              viewportOptions: { viewportId: 'io-2', viewportType: 'stack', toolGroupId: 'default' },
+              displaySets: [{ id: 'ioDisplaySet' }],
+            },
+            {
+              viewportOptions: { viewportId: 'io-3', viewportType: 'stack', toolGroupId: 'default' },
+              displaySets: [{ id: 'ioDisplaySet' }],
+            },
+            {
+              viewportOptions: { viewportId: 'io-4', viewportType: 'stack', toolGroupId: 'default' },
+              displaySets: [{ id: 'ioDisplaySet' }],
             },
           ],
         },

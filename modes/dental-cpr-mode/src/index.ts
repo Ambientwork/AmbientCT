@@ -1,4 +1,4 @@
-import { addTool, MouseBindings } from '@cornerstonejs/tools';
+import { addTool, Enums as ToolEnums } from '@cornerstonejs/tools';
 import DentalArchSplineTool from '@ambientwork/ohif-extension-dental-cpr/src/tools/DentalArchSplineTool';
 
 const extensionDependencies = {
@@ -10,6 +10,7 @@ const extensionDependencies = {
 function modeFactory() {
   return {
     id: '@ambientwork/ohif-mode-dental-cpr',
+    routeName: 'dentalCPR',
     version: '0.1.0',
     displayName: 'Dental CPR',
     description:
@@ -34,26 +35,16 @@ function modeFactory() {
               '@ambientwork/ohif-extension-dental-tools.panelModule.dentalTools',
             ],
             viewports: [
-              // Top-left: Axial CBCT — draw the dental arch here
+              // Single entry — DentalViewRouter handles all three panes.
+              // OHIF's _getViewportComponent finds this entry first (it matches
+              // 'stack' display sets) and routes all panes here.
+              // DentalViewRouter then dispatches by viewportId:
+              //   'cbctAxial'          → Cornerstone3D volume viewport
+              //   'dentalCPR'          → DentalCPRViewport (vtk.js panoramic)
+              //   'dentalCrossSection' → DentalCrossSectionViewport (vtk.js)
               {
                 namespace:
-                  '@ohif/extension-cornerstone.viewportModule.cornerstone',
-                displaySetsToDisplay: [
-                  '@ohif/extension-default.sopClassHandlerModule.stack',
-                ],
-              },
-              // Top-right: Panoramic CPR — click to select cross-section position
-              {
-                namespace:
-                  '@ambientwork/ohif-extension-dental-cpr.viewportModule.dentalCPRViewport',
-                displaySetsToDisplay: [
-                  '@ohif/extension-default.sopClassHandlerModule.stack',
-                ],
-              },
-              // Bottom: Perpendicular cross-section at clicked arch position
-              {
-                namespace:
-                  '@ambientwork/ohif-extension-dental-cpr.viewportModule.dentalCrossSectionViewport',
+                  '@ambientwork/ohif-extension-dental-cpr.viewportModule.dentalViewRouter',
                 displaySetsToDisplay: [
                   '@ohif/extension-default.sopClassHandlerModule.stack',
                 ],
@@ -72,7 +63,7 @@ function modeFactory() {
             // Tool already registered — no-op
           }
 
-          // Create tool group for this mode
+          // Create tool group for axial viewport (DentalArchSplineTool active here)
           const TOOL_GROUP_ID = 'dentalCPRToolGroup';
           let toolGroup = toolGroupService.getToolGroup(TOOL_GROUP_ID);
           if (!toolGroup) {
@@ -81,8 +72,17 @@ function modeFactory() {
 
           toolGroup.addTool(DentalArchSplineTool.toolName);
           toolGroup.setToolActive(DentalArchSplineTool.toolName, {
-            bindings: [{ mouseButton: MouseBindings.Primary }],
+            bindings: [{ mouseButton: ToolEnums?.MouseBindings?.Primary ?? 1 }],
           });
+
+          // Create empty tool group for CPR/cross-section viewports.
+          // These render via vtk.js and have no imageData, so Cornerstone's
+          // annotation filtering (filterAnnotationsWithinSlice) would crash
+          // if a real tool group with tools was attached.
+          const VIEWS_GROUP_ID = 'dentalViewsGroup';
+          if (!toolGroupService.getToolGroup(VIEWS_GROUP_ID)) {
+            toolGroupService.createToolGroup(VIEWS_GROUP_ID);
+          }
 
           console.log('[DentalCPR] Mode init — DentalArchSplineTool active on left click');
         },

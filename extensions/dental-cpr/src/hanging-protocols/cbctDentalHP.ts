@@ -31,6 +31,19 @@ export const cbctDentalHP = {
     },
   ],
 
+  // Top-level displaySetSelectors — required by HangingProtocolService._validateProtocol
+  displaySetSelectors: {
+    ctDisplaySet: {
+      seriesMatchingRules: [
+        {
+          attribute: 'Modality',
+          constraint: { equals: { value: 'CT' } },
+          required: true,
+        },
+      ],
+    },
+  },
+
   stages: [
     {
       id: 'dentalCPRLayout',
@@ -48,53 +61,48 @@ export const cbctDentalHP = {
         {
           viewportOptions: {
             viewportId: 'cbctAxial',
-            viewportType: 'volume',
-            orientation: 'axial',
+            viewportType: 'stack',
             toolGroupId: 'dentalCPRToolGroup',
-            initialImageOptions: { preset: -1 },
             background: [0, 0, 0],
           },
           displaySets: [{ id: 'ctDisplaySet' }],
-          position: { x: 0, y: 0, width: 0.5, height: 0.5 },
         },
 
         // ── Top-right: panoramic CPR ────────────────────────────────────────
+        // DentalViewRouter renders DentalCPRViewport for this viewportId.
         {
           viewportOptions: {
             viewportId: 'dentalCPR',
-            viewportType: 'custom',
-            customViewportType:
-              '@ambientwork/ohif-extension-dental-cpr.viewportModule.dentalCPRViewport',
-            toolGroupId: 'dentalCPRToolGroup',
+            viewportType: 'stack',
+            toolGroupId: 'dentalViewsGroup',
+            background: [0, 0, 0],
           },
           displaySets: [{ id: 'ctDisplaySet' }],
-          position: { x: 0.5, y: 0, width: 0.5, height: 0.5 },
         },
 
-        // ── Bottom-full: perpendicular cross-section ────────────────────────
+        // ── Bottom-left: perpendicular cross-section ─────────────────────────
+        // DentalViewRouter renders DentalCrossSectionViewport for this viewportId.
         {
           viewportOptions: {
             viewportId: 'dentalCrossSection',
-            viewportType: 'custom',
-            customViewportType:
-              '@ambientwork/ohif-extension-dental-cpr.viewportModule.dentalCrossSectionViewport',
-            toolGroupId: 'dentalCPRToolGroup',
+            viewportType: 'stack',
+            toolGroupId: 'dentalViewsGroup',
+            background: [0, 0, 0],
           },
           displaySets: [{ id: 'ctDisplaySet' }],
-          position: { x: 0, y: 0.5, width: 1.0, height: 0.5 },
         },
-      ],
 
-      displaySets: [
+        // ── Bottom-right: empty slot to complete the 2×2 grid ───────────────
+        // Required: 2 rows × 2 columns = 4 slots; all must be defined to avoid
+        // "No match details for viewport undefined" in HangingProtocolService.
         {
-          id: 'ctDisplaySet',
-          seriesMatchingRules: [
-            {
-              attribute: 'Modality',
-              constraint: { equals: 'CT' },
-              required: true,
-            },
-          ],
+          viewportOptions: {
+            viewportId: 'dentalEmpty',
+            viewportType: 'stack',
+            toolGroupId: 'dentalViewsGroup',
+            background: [0, 0, 0],
+          },
+          displaySets: [{ id: 'ctDisplaySet' }],
         },
       ],
     },

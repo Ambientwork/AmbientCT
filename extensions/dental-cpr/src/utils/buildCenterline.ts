@@ -223,13 +223,11 @@ export function buildCenterline(
   // --- Per-point quaternion orientations (Frenet-Serret frames) ---
   const quats = new Float32Array(n * 4);
 
-  let prevN = [0, 0, 1]; // initial "up" reference
-
   for (let i = 0; i < n; i++) {
     const iPrev = Math.max(0, i - 1);
     const iNext = Math.min(n - 1, i + 1);
 
-    // Tangent T = normalised(next - prev)
+    // Tangent T = normalised(next − prev)
     const T = [
       splinePts[iNext][0] - splinePts[iPrev][0],
       splinePts[iNext][1] - splinePts[iPrev][1],
@@ -237,24 +235,40 @@ export function buildCenterline(
     ];
     normalize(T);
 
-    // Normal N = T × prevN; if degenerate, fall back to world-Z × T
-    const N = [0, 0, 0];
-    cross(T, prevN, N);
-    if (normalize(N) < 1e-6) {
-      cross([0, 0, 1], T, N);
-      if (normalize(N) < 1e-6) {
-        cross([0, 1, 0], T, N);
-        normalize(N);
-      }
+    // vtkImageCPRMapper sampling formula:
+    //   samplingDirection = Q * tangentDirection   (default tangentDirection = [1,0,0])
+    //   projectionDirection = Q * bitangentDirection (default = [0,0,1])
+    //
+    // We want:
+    //   samplingDirection = world-Z = [0,0,1]  (superior-inferior = tooth height)
+    //   projectionDirection = T  (arch tangent = MIP slab along arch)
+    //
+    // Therefore build the rotation matrix with columns [N_new, B_new, T]:
+    //   Q * [1,0,0] = N_new = world-Z projected ⊥ to T
+    //   Q * [0,1,0] = B_new = T × N_new (buccal-lingual direction)
+    //   Q * [0,0,1] = T  (arch tangent)
+    //
+    // For dental arches drawn in the axial plane (T.z ≈ 0): N_new ≈ [0,0,1].
+
+    // N_new = world-Z − (world-Z · T)·T, projected onto ⊥-to-T plane
+    const Tz = T[2];
+    const N_new = [-T[0] * Tz, -T[1] * Tz, 1.0 - Tz * Tz];
+    if (normalize(N_new) < 1e-6) {
+      // Degenerate (T nearly vertical): fall back to world-X
+      N_new[0] = 1 - T[0] * T[0]; N_new[1] = -T[0] * T[1]; N_new[2] = -T[0] * T[2];
+      normalize(N_new);
     }
-    prevN = [...N];
 
-    // Bitangent B = T × N
-    const B = [0, 0, 0];
-    cross(T, N, B);
-    normalize(B);
+    // B_new = N_new × T  (buccal-lingual; right-handed with N_new and T → det = +1)
+    const B_new = [0, 0, 0];
+    cross(N_new, T, B_new);
+    normalize(B_new);
 
-    const [qx, qy, qz, qw] = mat3ToQuat(T, N, B);
+    // Quaternion: rotation matrix columns = [N_new | T | B_new]
+    //   Q * [1,0,0] = N_new = world-Z  → samplingDirection  = tooth height ✓
+    //   Q * [0,1,0] = T                → arch tangent
+    //   Q * [0,0,1] = B_new            → projectionDirection = buccal-lingual (MIP slab) ✓
+    const [qx, qy, qz, qw] = mat3ToQuat(N_new, T, B_new);
     quats[i * 4 + 0] = qx;
     quats[i * 4 + 1] = qy;
     quats[i * 4 + 2] = qz;

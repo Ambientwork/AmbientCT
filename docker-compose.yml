@@ -73,6 +73,7 @@ services:
       ORTHANC_PASSWORD: "${ORTHANC_PASSWORD:?ORTHANC_PASSWORD must be set in .env}"
     ports:
       - "${VIEWER_PORT:-3000}:80"
+      - "${VIEWER_SSL_PORT:-3443}:443"
     depends_on:
       orthanc:
         condition: service_healthy
@@ -80,6 +81,7 @@ services:
       - ./config/ohif-config.js:/usr/share/nginx/html/app-config.js:ro
       - ./config/help.html:/usr/share/nginx/html/help:ro
       - ./config/nginx/ohif.conf.template:/etc/nginx/ohif.conf.template:ro
+      - ./config/nginx/ssl:/etc/nginx/ssl:ro
     tmpfs:
       - /tmp:noexec,nosuid,size=32m
       - /var/cache/nginx:noexec,nosuid,size=32m
@@ -92,7 +94,7 @@ services:
         max-size: "${LOG_MAX_SIZE:-10m}"
         max-file: "${LOG_MAX_FILE:-3}"
     healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:80/ || exit 1"]
+      test: ["CMD-SHELL", "curl -fk https://localhost:443/ || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -110,6 +112,16 @@ services:
     restart: unless-stopped
     mem_limit: ${VIEWER_MEM_LIMIT:-256m}
     cpus: ${VIEWER_CPUS:-0.5}
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        AUTH=$$(printf '%s:%s' "$$ORTHANC_USER" "$$ORTHANC_PASSWORD" | base64 | tr -d '\n')
+        sed "s|ORTHANC_AUTH_PLACEHOLDER|$$AUTH|g" /etc/nginx/ohif.conf.template > /etc/nginx/conf.d/default.conf
+        exec nginx -g 'daemon off;'
+    environment:
+      ORTHANC_USER: "${ORTHANC_USER:-admin}"
+      ORTHANC_PASSWORD: "${ORTHANC_PASSWORD:?ORTHANC_PASSWORD must be set in .env}"
     ports:
       - "${VIEWER_STOCK_PORT:-3001}:80"
     depends_on:
@@ -117,10 +129,7 @@ services:
         condition: service_healthy
     volumes:
       - ./config/ohif-config.js:/usr/share/nginx/html/app-config.js:ro
-    tmpfs:
-      - /tmp:noexec,nosuid,size=32m
-      - /var/cache/nginx:noexec,nosuid,size=32m
-      - /var/run:noexec,nosuid,size=1m
+      - ./config/nginx/ohif.conf.template:/etc/nginx/ohif.conf.template:ro
     networks:
       - pacs-net
     logging:

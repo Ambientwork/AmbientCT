@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback } from 'react';
-import { annotation, triggerAnnotationModified, eventTarget } from '@cornerstonejs/tools';
+import { annotation, triggerAnnotationModified } from '@cornerstonejs/tools';
+import { eventTarget } from '@cornerstonejs/core';
 import { DENTAL_TOOTH_PICK_EVENT } from '../tools/ToothAnnotationTool';
 import { getAllTeeth } from '../utils/fdi';
 
