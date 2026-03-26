@@ -82,7 +82,8 @@ export default function DentalCrossSectionViewport({
 
       openGLWindow = vtkOpenGLRenderWindow.newInstance();
       openGLWindow.setContainer(container);
-      openGLWindow.setSize(container.clientWidth || 350, container.clientHeight || 450);
+      // Use actual container size; fallback only if layout hasn't settled yet
+      openGLWindow.setSize(container.clientWidth || 512, container.clientHeight || 512);
       renderWindow.addView(openGLWindow);
 
       interactor = vtkRenderWindowInteractor.newInstance();
@@ -99,11 +100,23 @@ export default function DentalCrossSectionViewport({
       return;
     }
 
+    // Correct size once layout has settled (RAF fires after browser paint)
+    requestAnimationFrame(() => {
+      const w = container.clientWidth;
+      const h = container.clientHeight;
+      if (w > 0 && h > 0) {
+        openGLWindow.setSize(w, h);
+        renderWindowRef.current?.render();
+      }
+    });
+
     const observer = new ResizeObserver(entries => {
       for (const entry of entries) {
         const { width, height } = entry.contentRect;
-        openGLWindow.setSize(Math.round(width), Math.round(height));
-        renderWindow.render();
+        if (width > 0 && height > 0) {
+          openGLWindow.setSize(Math.round(width), Math.round(height));
+          renderWindow.render();
+        }
       }
     });
     observer.observe(container);

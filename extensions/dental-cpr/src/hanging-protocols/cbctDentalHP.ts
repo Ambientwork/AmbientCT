@@ -1,18 +1,18 @@
 /**
  * Hanging Protocol: cbctDentalCPR
  *
- * 3-panel dental layout:
+ * Layout:
  *
  *   ┌──────────────┬──────────────────────────┐
  *   │              │                          │
- *   │  Axial CBCT  │   Panoramic CPR          │
- *   │  (draw arch) │   (click → cross-section)│
+ *   │  Axial CBCT  │   Cross-Section (⊥ arch) │
+ *   │  (draw arch) │                          │
  *   │              │                          │
- *   ├──────────────┴──────────────────────────┤
- *   │                                         │
- *   │   Cross-Section (⊥ to arch)             │
- *   │                                         │
- *   └─────────────────────────────────────────┘
+ *   ├──────────────┼──────────────────────────┤
+ *   │              │                          │
+ *   │  Panoramic   │   (empty)                │
+ *   │  CPR         │                          │
+ *   └──────────────┴──────────────────────────┘
  */
 export const cbctDentalHP = {
   id: 'cbctDentalCPR',
@@ -68,19 +68,7 @@ export const cbctDentalHP = {
           displaySets: [{ id: 'ctDisplaySet' }],
         },
 
-        // ── Top-right: panoramic CPR ────────────────────────────────────────
-        // DentalViewRouter renders DentalCPRViewport for this viewportId.
-        {
-          viewportOptions: {
-            viewportId: 'dentalCPR',
-            viewportType: 'stack',
-            toolGroupId: 'dentalViewsGroup',
-            background: [0, 0, 0],
-          },
-          displaySets: [{ id: 'ctDisplaySet' }],
-        },
-
-        // ── Bottom-left: perpendicular cross-section ─────────────────────────
+        // ── Top-right: perpendicular cross-section ──────────────────────────
         // DentalViewRouter renders DentalCrossSectionViewport for this viewportId.
         {
           viewportOptions: {
@@ -92,11 +80,22 @@ export const cbctDentalHP = {
           displaySets: [{ id: 'ctDisplaySet' }],
         },
 
-        // ── Bottom-right: coronal MPR ────────────────────────────────────────
-        // DentalViewRouter renders DentalMPRViewport (vtk.js coronal slice).
+        // ── Bottom-left: panoramic CPR ───────────────────────────────────────
+        // DentalViewRouter renders DentalCPRViewport for this viewportId.
         {
           viewportOptions: {
-            viewportId: 'dentalMPR',
+            viewportId: 'dentalCPR',
+            viewportType: 'stack',
+            toolGroupId: 'dentalViewsGroup',
+            background: [0, 0, 0],
+          },
+          displaySets: [{ id: 'ctDisplaySet' }],
+        },
+
+        // ── Bottom-right: empty placeholder (4th slot required for 2x2 grid) ─
+        {
+          viewportOptions: {
+            viewportId: 'dentalEmpty',
             viewportType: 'stack',
             toolGroupId: 'dentalViewsGroup',
             background: [0, 0, 0],

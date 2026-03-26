@@ -1,15 +1,14 @@
 import React from 'react';
 import DentalCPRViewport from './DentalCPRViewport';
 import DentalCrossSectionViewport from './DentalCrossSectionViewport';
-import DentalMPRViewport from './DentalMPRViewport';
 
 /**
- * DentalViewRouter — the single viewport component for all three panes.
+ * DentalViewRouter — the single viewport component for all panes.
  *
  * Why a single router?
  * OHIF's _getViewportComponent iterates the layout template's viewports array
  * and returns the FIRST component whose displaySetsToDisplay matches the
- * display set's SOPClassHandlerId.  Because all three panes receive the same
+ * display set's SOPClassHandlerId.  Because all panes receive the same
  * CBCT stack display set (SOPClassHandlerId = 'stack'), we can only reliably
  * select ONE viewport component for all of them.
  *
@@ -22,6 +21,7 @@ import DentalMPRViewport from './DentalMPRViewport';
  *   'cbctAxial'         → standard Cornerstone3D viewport (from extensionManager)
  *   'dentalCPR'         → DentalCPRViewport (vtk.js panoramic)
  *   'dentalCrossSection'→ DentalCrossSectionViewport (vtk.js cross-section)
+ *   'dentalEmpty'       → empty dark placeholder (required 4th slot in 2x2 grid)
  */
 export default function DentalViewRouter(props: any) {
   const { viewportId } = props;
@@ -38,25 +38,18 @@ export default function DentalViewRouter(props: any) {
     if (CornerstoneViewport) {
       return <CornerstoneViewport {...props} />;
     }
-    // Fallback: plain dark placeholder if Cornerstone lookup fails
     console.warn('[DentalViewRouter] CornerstoneViewport not found on window.extensionManager');
-    return (
-      <div style={{ width: '100%', height: '100%', background: '#050505' }} />
-    );
+    return <div style={{ width: '100%', height: '100%', background: '#050505' }} />;
   }
 
   if (viewportId === 'dentalCrossSection') {
     return <DentalCrossSectionViewport {...props} />;
   }
 
-  if (viewportId === 'dentalMPR') {
-    return <DentalMPRViewport {...props} />;
-  }
-
-  if (!viewportId) {
+  if (viewportId === 'dentalEmpty' || !viewportId) {
     return <div style={{ width: '100%', height: '100%', background: '#050505' }} />;
   }
 
-  // Default: panoramic CPR pane
+  // Default: panoramic CPR pane (dentalCPR)
   return <DentalCPRViewport {...props} />;
 }
