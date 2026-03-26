@@ -179,7 +179,9 @@ export default function DentalCrossSectionViewport({
             ));
           }
 
-          const i4 = (row * NUM_PX + col) * 4;
+          // Flip vertically: row 0 (canvas top) = inferior (root), row MAX = superior (crown)
+          const flippedRow = NUM_PX - 1 - row;
+          const i4 = (flippedRow * NUM_PX + col) * 4;
           data[i4]     = gray;
           data[i4 + 1] = gray;
           data[i4 + 2] = gray;

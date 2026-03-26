@@ -1,10 +1,30 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import DentalCPRViewport from './DentalCPRViewport';
 import DentalCrossSectionViewport from './DentalCrossSectionViewport';
+
+// Inject CSS to widen the dental container panel relative to the axial panel.
+// OHIF's ViewportGrid uses absolute positioning with inline styles; !important
+// overrides those inline values without touching OHIF's React state.
+const DENTAL_GRID_STYLE_ID = 'dental-grid-col-override';
 
 export default function DentalContainerViewport(props: any) {
   const { displaySets, servicesManager, extensionManager, commandsManager } = props;
   const sharedProps = { displaySets, servicesManager, extensionManager, commandsManager };
+
+  useEffect(() => {
+    if (document.getElementById(DENTAL_GRID_STYLE_ID)) return;
+    const style = document.createElement('style');
+    style.id = DENTAL_GRID_STYLE_ID;
+    // Target OHIF pane children: first pane = axial (33%), second = dental container (67%)
+    style.textContent = `
+      .group\\/pane:nth-child(1) { width: 33% !important; }
+      .group\\/pane:nth-child(2) { left: calc(33% + 4px) !important; width: calc(67% - 6px) !important; }
+    `;
+    document.head.appendChild(style);
+    return () => {
+      document.getElementById(DENTAL_GRID_STYLE_ID)?.remove();
+    };
+  }, []);
 
   return (
     <div style={{
