@@ -355,18 +355,34 @@ export default function DentalCPRViewport({
         renderer.addActor(actor);
 
         // The CPR actor lives in local model space at Z=0: X=[0,70], Y=[0,arcLen].
-        // Camera must look along -Z with Y as up. DO NOT use resetCamera() — it
-        // doesn't know about the flat geometry and may place the camera incorrectly.
+        // Camera orientation: viewUp=(1,0,0) → X-axis (tooth depth) runs vertically,
+        // Y-axis (arch arc-length) runs horizontally → traditional horizontal panoramic.
+        // parallelScale accounts for the viewport aspect ratio so the full arch (Y)
+        // fits horizontally within the panel.
         const bounds = actor.getBounds?.() ?? [0, 70, 0, arcLengthMm, 0, 0];
-        const imgW = bounds[1] ?? 70;
-        const imgH = bounds[3] ?? arcLengthMm;
+        const imgW = bounds[1] ?? 70;          // tooth depth in mm (X axis, 0–70 mm)
+        const imgH = bounds[3] ?? arcLengthMm; // arch length in mm (Y axis)
         const camera = renderer.getActiveCamera();
         camera.setParallelProjection(true);
         camera.setFocalPoint(imgW / 2, imgH / 2, 0);
         camera.setPosition(imgW / 2, imgH / 2, 500);
-        // viewUp=(1,0,0): X-axis (buccal-lingual) points up → arch (Y) runs horizontally
+        // viewUp=(1,0,0): X-axis (buccal-lingual depth) points up on screen
+        //                  Y-axis (arch arc-length) runs left → right
         camera.setViewUp(1, 0, 0);
-        camera.setParallelScale(Math.max(imgW, imgH) / 2);
+
+        // Compute parallelScale so the FULL arch (imgH mm) fits in the viewport width.
+        // parallelScale = half the model-space height visible on screen.
+        // viewport_width_model = 2 × parallelScale × aspectRatio
+        // Solve for parallelScale: PS = imgH / (2 × aspectRatio)
+        // Also ensure tooth depth (imgW mm) is fully visible: PS ≥ imgW / 2
+        const glSize = openGLWindowRef.current
+          ? (openGLWindowRef.current as any).getSize?.() as [number, number] | undefined
+          : undefined;
+        const viewW = glSize?.[0] ?? container.clientWidth  ?? 400;
+        const viewH = glSize?.[1] ?? container.clientHeight ?? 600;
+        const aspect = viewH > 0 ? viewW / viewH : 1;
+        const parallelScale = Math.max(imgW / 2, imgH / (2 * aspect));
+        camera.setParallelScale(parallelScale);
         renderer.resetCameraClippingRange();
         renderWindow.render();
 

@@ -250,11 +250,10 @@ export default function DentalCrossSectionViewport({
           ref={canvasRef}
           style={{
             display: status === 'idle' ? 'none' : 'block',
-            maxWidth: '100%',
-            maxHeight: '100%',
+            width: '100%',
+            height: '100%',
+            objectFit: 'contain',
             imageRendering: 'pixelated',
-            // object-fit not needed — we rely on max-width/height + aspect-ratio
-            aspectRatio: '1 / 1',
           }}
         />
         {status === 'idle' && (
