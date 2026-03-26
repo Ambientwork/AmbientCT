@@ -76,13 +76,17 @@ export default class DentalArchSplineTool extends AnnotationTool {
       this._completeArch(evt.detail.element);
     };
 
-    // Attach Enter key in constructor — reliable regardless of onSetToolActive lifecycle.
+    // Attach Enter key in CAPTURING phase (3rd arg = true) so OHIF/Cornerstone
+    // stopPropagation() calls in viewport divs cannot swallow the event before
+    // we see it. Capturing fires top-down (window → target), bubbling fires
+    // bottom-up (target → window), so capturing always wins.
     window.addEventListener('keydown', (e: KeyboardEvent) => {
-      console.log(`[DentalArchSpline] keydown: key=${e.key} isDrawing=${this.isDrawing} uid=${this.currentAnnotationUID}`);
+      console.log(`[DentalArchSpline] keydown(capture): key=${e.key} isDrawing=${this.isDrawing} uid=${this.currentAnnotationUID}`);
       if (e.key === 'Enter' && this.isDrawing) {
+        e.stopPropagation(); // prevent OHIF from also handling Enter
         this._completeArch(this._lastElement ?? undefined);
       }
-    });
+    }, true /* capture */);
   }
 
   /** Reset state when tool is deactivated. */

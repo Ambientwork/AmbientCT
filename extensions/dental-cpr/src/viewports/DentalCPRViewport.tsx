@@ -221,9 +221,7 @@ export default function DentalCPRViewport({
     volumeLoader
       .createAndCacheVolume(volumeId, { imageIds })
       .then((vol: Types.IImageVolume) => {
-        // Delay load() by 2 s to let cbctAxial Cornerstone viewport register itself
-        // before autoLoad tries to render loaded frames to it (race condition fix).
-        setTimeout(() => vol.load(), 2000);
+        vol.load();
         console.log('[DentalCPR] Volume streaming started:', volumeId);
         setStatusMsg(
           'Click to place control points along the dental arch on the axial view. Double-click to complete.'
@@ -389,16 +387,29 @@ export default function DentalCPRViewport({
         camera.setParallelProjection(true);
         camera.setFocalPoint(imgW / 2, imgH / 2, 0);
         camera.setPosition(imgW / 2, imgH / 2, 500);
-        // viewUp=(1,0,0): X-axis (buccal-lingual depth) points up on screen
-        //                  Y-axis (arch arc-length) runs left → right
+        // viewUp=(1,0,0): X-axis (tooth depth) points UP on screen,
+        //                  Y-axis (arch arc-length) runs LEFT → RIGHT.
         camera.setViewUp(1, 0, 0);
 
-        // parallelScale = half the visible height in world coords (with viewUp=(1,0,0),
-        // "height" = X-axis = tooth depth direction).
-        // Set to imgW/2 so the full crown-to-root depth (70 mm) fills the panel height.
-        // The arch (Y-axis) extends horizontally and will be partially cropped for long
-        // arches — the slider already lets the user navigate to any arch position.
-        const parallelScale = imgW / 2;
+        // parallelScale = half the visible world-space height (screen-Y direction).
+        // With viewUp=(1,0,0), screen-Y = world-X (tooth depth) and
+        //                       screen-X = world-Y (arch length).
+        //
+        // To fit the full arch horizontally:
+        //   visible_world_width = parallelScale * 2 * aspectRatio ≥ arcLengthMm
+        //   → scaleForArch = arcLengthMm / (2 * aspectRatio)
+        //
+        // To fit full tooth depth vertically:
+        //   → scaleForDepth = imgW / 2
+        //
+        // Take the larger of both so neither dimension is cropped, then add 5% padding.
+        const container = vtkContainerRef.current;
+        const vpW = container?.clientWidth  || 700;
+        const vpH = container?.clientHeight || 400;
+        const aspectRatio = vpW / vpH;
+        const scaleForArch  = imgH / (2 * aspectRatio); // fit arch horizontally
+        const scaleForDepth = imgW / 2;                  // fit tooth depth vertically
+        const parallelScale = Math.max(scaleForArch, scaleForDepth) * 1.05; // 5% margin
         camera.setParallelScale(parallelScale);
         renderer.resetCameraClippingRange();
         renderWindow.render();
