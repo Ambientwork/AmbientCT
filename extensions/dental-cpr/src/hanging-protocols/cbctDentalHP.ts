@@ -1,18 +1,14 @@
 /**
  * Hanging Protocol: cbctDentalCPR
  *
- * Layout:
+ * 3-panel layout (single row):
  *
- *   ┌──────────────┬──────────────────────────┐
- *   │              │                          │
- *   │  Axial CBCT  │   Cross-Section (⊥ arch) │
- *   │  (draw arch) │                          │
- *   │              │                          │
- *   ├──────────────┼──────────────────────────┤
- *   │              │                          │
- *   │  Panoramic   │   (empty)                │
- *   │  CPR         │                          │
- *   └──────────────┴──────────────────────────┘
+ *   ┌──────────────┬──────────────────────────┬──────────────────────┐
+ *   │              │                          │                      │
+ *   │  Axial CBCT  │   Panoramic CPR          │  Cross-Section (⊥)   │
+ *   │  (draw arch) │   (click → cross-section)│                      │
+ *   │              │                          │                      │
+ *   └──────────────┴──────────────────────────┴──────────────────────┘
  */
 export const cbctDentalHP = {
   id: 'cbctDentalCPR',
@@ -53,11 +49,11 @@ export const cbctDentalHP = {
 
       viewportStructure: {
         layoutType: 'grid',
-        properties: { rows: 2, columns: 2 },
+        properties: { rows: 1, columns: 3 },
       },
 
       viewports: [
-        // ── Top-left: axial CBCT (draw arch here) ──────────────────────────
+        // ── Left: axial CBCT (draw arch here) ──────────────────────────────
         {
           viewportOptions: {
             viewportId: 'cbctAxial',
@@ -68,19 +64,7 @@ export const cbctDentalHP = {
           displaySets: [{ id: 'ctDisplaySet' }],
         },
 
-        // ── Top-right: perpendicular cross-section ──────────────────────────
-        // DentalViewRouter renders DentalCrossSectionViewport for this viewportId.
-        {
-          viewportOptions: {
-            viewportId: 'dentalCrossSection',
-            viewportType: 'stack',
-            toolGroupId: 'dentalViewsGroup',
-            background: [0, 0, 0],
-          },
-          displaySets: [{ id: 'ctDisplaySet' }],
-        },
-
-        // ── Bottom-left: panoramic CPR ───────────────────────────────────────
+        // ── Middle: panoramic CPR ────────────────────────────────────────────
         // DentalViewRouter renders DentalCPRViewport for this viewportId.
         {
           viewportOptions: {
@@ -92,10 +76,11 @@ export const cbctDentalHP = {
           displaySets: [{ id: 'ctDisplaySet' }],
         },
 
-        // ── Bottom-right: empty placeholder (4th slot required for 2x2 grid) ─
+        // ── Right: perpendicular cross-section ──────────────────────────────
+        // DentalViewRouter renders DentalCrossSectionViewport for this viewportId.
         {
           viewportOptions: {
-            viewportId: 'dentalEmpty',
+            viewportId: 'dentalCrossSection',
             viewportType: 'stack',
             toolGroupId: 'dentalViewsGroup',
             background: [0, 0, 0],
