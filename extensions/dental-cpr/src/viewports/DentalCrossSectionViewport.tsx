@@ -23,7 +23,7 @@ interface DentalCrossSectionViewportProps {
 }
 
 // ~4mm at 300 frames over 150mm arch: step to adjacent prev/next cross-sections
-const CROSS_SECTION_STEP = 8;
+export const CROSS_SECTION_STEP = 8;
 
 // 50 mm × 50 mm field at 0.25 mm/px → 200 × 200 pixel output
 const SLICE_SIZE_MM = 50;

@@ -21,6 +21,7 @@ import { ARCH_SPLINE_COMPLETED } from '../tools/DentalArchSplineTool';
 import {
   ARCH_CROSS_SECTION_POSITION,
   ARCH_NAVIGATE_DELTA,
+  CROSS_SECTION_STEP,
 } from './DentalCrossSectionViewport';
 import type { CrossSectionEventDetail } from './DentalCrossSectionViewport';
 
@@ -65,7 +66,7 @@ export default function DentalCPRViewport({
   const [statusMsg, setStatusMsg] = useState(
     'Click to place control points along the dental arch on the axial view. Double-click to complete.'
   );
-  const [slabMm, setSlabMm] = useState(5);
+  const [slabMm, setSlabMm] = useState(10);
 
   // Spline frames stored after each arch completion — used for cross-section clicks
   const splineFramesRef = useRef<CenterlinePoint[]>([]);
@@ -547,7 +548,7 @@ export default function DentalCPRViewport({
           <input
             type="range"
             min={1}
-            max={20}
+            max={40}
             value={slabMm}
             onChange={e => setSlabMm(Number(e.target.value))}
             style={{ width: 64, accentColor: '#00aaff' }}
@@ -648,23 +649,25 @@ export default function DentalCPRViewport({
           </div>
         )}
 
-        {/* Cross-section cursor line — draggable indicator */}
-        {cursorXPct !== null && (
-          <div
-            style={{
-              position: 'absolute',
-              left: `${cursorXPct}%`,
-              top: 0,
-              bottom: 0,
-              width: 2,
-              background: '#00aaff',
-              opacity: 0.85,
-              pointerEvents: 'none',
-              zIndex: 10,
-              boxShadow: '0 0 4px #00aaff88',
-            }}
-          />
-        )}
+        {/* Cross-section cursor lines: ⊥ Prev (dashed), ⊥ Center (solid), ⊥ Next (dashed) */}
+        {cursorXPct !== null && (() => {
+          const numSamples = splineFramesRef.current.length || 1;
+          const stepPct = (CROSS_SECTION_STEP / numSamples) * 100;
+          const prevPct = Math.max(0, cursorXPct - stepPct);
+          const nextPct = Math.min(100, cursorXPct + stepPct);
+          const dashedBg = 'repeating-linear-gradient(to bottom, #00aaff 0px, #00aaff 5px, transparent 5px, transparent 10px)';
+          return (
+            <>
+              <div style={{ position: 'absolute', left: `${prevPct}%`, top: 0, bottom: 0, width: 1,
+                background: dashedBg, opacity: 0.7, pointerEvents: 'none', zIndex: 10 }} />
+              <div style={{ position: 'absolute', left: `${cursorXPct}%`, top: 0, bottom: 0, width: 2,
+                background: '#00aaff', opacity: 0.9, pointerEvents: 'none', zIndex: 11,
+                boxShadow: '0 0 5px #00aaff99' }} />
+              <div style={{ position: 'absolute', left: `${nextPct}%`, top: 0, bottom: 0, width: 1,
+                background: dashedBg, opacity: 0.7, pointerEvents: 'none', zIndex: 10 }} />
+            </>
+          );
+        })()}
       </div>
     </div>
   );
