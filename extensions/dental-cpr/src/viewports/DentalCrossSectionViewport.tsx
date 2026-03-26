@@ -3,6 +3,8 @@ import { cache } from '@cornerstonejs/core';
 import type { CenterlinePoint } from '../utils/buildCenterline';
 
 export const ARCH_CROSS_SECTION_POSITION = 'DENTAL_ARCH_CROSS_SECTION_POSITION';
+/** Fired by cross-section viewport on wheel scroll — tells CPR viewport to step */
+export const ARCH_NAVIGATE_DELTA = 'DENTAL_ARCH_NAVIGATE_DELTA';
 
 export interface CrossSectionEventDetail {
   frame: CenterlinePoint;
@@ -58,6 +60,10 @@ export default function DentalCrossSectionViewport({
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [status, setStatus] = useState<'idle' | 'ready' | 'error'>('idle');
   const [positionLabel, setPositionLabel] = useState('');
+  const [sliceCounter, setSliceCounter] = useState<{ idx: number; total: number } | null>(null);
+  // Refs for use in event handlers (avoid stale closures)
+  const currentIdxRef = useRef<number>(0);
+  const totalSamplesRef = useRef<number>(1);
 
   // ── Volume lookup ──────────────────────────────────────────────────────────
   const getVolume = useCallback(() => {
@@ -177,7 +183,7 @@ export default function DentalCrossSectionViewport({
 
       ctx.putImageData(pixels, 0, 0);
       setStatus('ready');
-      setPositionLabel(`${Math.round(positionPct)}% along arch`);
+      setPositionLabel(`${positionPct.toFixed(0)}%`);
     },
     [getVolume]
   );
@@ -187,12 +193,22 @@ export default function DentalCrossSectionViewport({
     const handler = (evt: Event) => {
       const { frame, splineIndex, numSamples } =
         (evt as CustomEvent<CrossSectionEventDetail>).detail;
+      currentIdxRef.current = splineIndex;
+      totalSamplesRef.current = numSamples;
+      setSliceCounter({ idx: splineIndex, total: numSamples });
       const pct = (splineIndex / Math.max(numSamples - 1, 1)) * 100;
       renderCrossSection(frame, pct);
     };
     window.addEventListener(ARCH_CROSS_SECTION_POSITION, handler);
     return () => window.removeEventListener(ARCH_CROSS_SECTION_POSITION, handler);
   }, [renderCrossSection]);
+
+  // ── Mouse wheel: step along arch ───────────────────────────────────────────
+  const onWheel = useCallback((e: React.WheelEvent) => {
+    e.preventDefault();
+    const step = e.deltaY > 0 ? 3 : -3;
+    window.dispatchEvent(new CustomEvent(ARCH_NAVIGATE_DELTA, { detail: { delta: step } }));
+  }, []);
 
   const statusColour = status === 'ready' ? '#00ff88' : status === 'error' ? '#ff6b6b' : '#555';
 
@@ -232,10 +248,16 @@ export default function DentalCrossSectionViewport({
             ? 'Volume not ready — complete the arch first'
             : positionLabel}
         </span>
+        {sliceCounter && (
+          <span style={{ color: '#555', fontSize: 11, flexShrink: 0, fontVariantNumeric: 'tabular-nums' }}>
+            {sliceCounter.idx + 1} / {sliceCounter.total}
+          </span>
+        )}
       </div>
 
       {/* Canvas fills the remaining space, centered, maintaining square aspect */}
       <div
+        onWheel={onWheel}
         style={{
           flex: 1,
           position: 'relative',
@@ -244,6 +266,7 @@ export default function DentalCrossSectionViewport({
           alignItems: 'center',
           justifyContent: 'center',
           overflow: 'hidden',
+          cursor: status === 'ready' ? 'ns-resize' : 'default',
         }}
       >
         <canvas

@@ -19,6 +19,7 @@ import type { CenterlinePoint } from '../utils/buildCenterline';
 import { ARCH_SPLINE_COMPLETED } from '../tools/DentalArchSplineTool';
 import {
   ARCH_CROSS_SECTION_POSITION,
+  ARCH_NAVIGATE_DELTA,
 } from './DentalCrossSectionViewport';
 import type { CrossSectionEventDetail } from './DentalCrossSectionViewport';
 
@@ -68,14 +69,16 @@ export default function DentalCPRViewport({
   // Spline frames stored after each arch completion — used for cross-section clicks
   const splineFramesRef = useRef<CenterlinePoint[]>([]);
 
-  // Cross-section cursor position (0-100 %) — updated on click and on auto-fire
+  // Cross-section cursor position (0-100 %) — state for rendering, ref for event handlers
   const [cursorXPct, setCursorXPct] = useState<number | null>(null);
+  const cursorXPctRef = useRef<number>(50);
 
-  // Navigate cross-section via slider or arrow keys
+  // Navigate cross-section via slider, click, drag, or wheel
   const navigateArch = useCallback((pct: number) => {
     const frames = splineFramesRef.current;
     if (!frames.length) return;
     const clamped = Math.max(0, Math.min(100, pct));
+    cursorXPctRef.current = clamped;
     const idx = Math.round((clamped / 100) * (frames.length - 1));
     setCursorXPct(clamped);
     window.dispatchEvent(new CustomEvent(ARCH_CROSS_SECTION_POSITION, {
@@ -137,27 +140,42 @@ export default function DentalCPRViewport({
     });
     observer.observe(container);
 
-    // Click on panoramic → fire cross-section event for DentalCrossSectionViewport
-    const onCanvasClick = (e: MouseEvent) => {
-      const frames = splineFramesRef.current;
-      if (!frames.length) return;
+    // Drag on panoramic → continuously update cross-section position
+    let isDragging = false;
+    const getPctFromMouseEvent = (e: MouseEvent) => {
       const rect = container.getBoundingClientRect();
-      const xFraction = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
-      const splineIndex = Math.round(xFraction * (frames.length - 1));
-      const detail: CrossSectionEventDetail = {
-        frame: frames[splineIndex],
-        splineIndex,
-        numSamples: frames.length,
-      };
-      window.dispatchEvent(
-        new CustomEvent(ARCH_CROSS_SECTION_POSITION, { detail })
-      );
+      return Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width)) * 100;
     };
-    container.addEventListener('click', onCanvasClick);
+    const onMouseDown = (e: MouseEvent) => {
+      if (!splineFramesRef.current.length) return;
+      isDragging = true;
+      navigateArch(getPctFromMouseEvent(e));
+    };
+    const onMouseMove = (e: MouseEvent) => {
+      if (!isDragging || !splineFramesRef.current.length) return;
+      navigateArch(getPctFromMouseEvent(e));
+    };
+    const onMouseUp = () => { isDragging = false; };
+
+    // Wheel on panoramic → step through cross-sections
+    const onWheel = (e: WheelEvent) => {
+      if (!splineFramesRef.current.length) return;
+      e.preventDefault();
+      const step = e.deltaY > 0 ? 2 : -2;
+      navigateArch(cursorXPctRef.current + step);
+    };
+
+    container.addEventListener('mousedown', onMouseDown);
+    container.addEventListener('mousemove', onMouseMove);
+    window.addEventListener('mouseup', onMouseUp);
+    container.addEventListener('wheel', onWheel, { passive: false });
 
     return () => {
       observer.disconnect();
-      container.removeEventListener('click', onCanvasClick);
+      container.removeEventListener('mousedown', onMouseDown);
+      container.removeEventListener('mousemove', onMouseMove);
+      window.removeEventListener('mouseup', onMouseUp);
+      container.removeEventListener('wheel', onWheel);
       interactor?.unbindEvents(container);
       openGLWindow?.delete();
       renderWindow?.delete();
@@ -433,12 +451,22 @@ export default function DentalCPRViewport({
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (!splineFramesRef.current.length) return;
-      if (e.key === 'ArrowLeft') { e.preventDefault(); navigateArch((cursorXPct ?? 50) - 2); }
-      if (e.key === 'ArrowRight') { e.preventDefault(); navigateArch((cursorXPct ?? 50) + 2); }
+      if (e.key === 'ArrowLeft') { e.preventDefault(); navigateArch(cursorXPctRef.current - 2); }
+      if (e.key === 'ArrowRight') { e.preventDefault(); navigateArch(cursorXPctRef.current + 2); }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [cursorXPct, navigateArch]);
+  }, [navigateArch]);
+
+  // Cross-section wheel → navigate arch
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const { delta } = (e as CustomEvent<{ delta: number }>).detail;
+      navigateArch(cursorXPctRef.current + delta);
+    };
+    window.addEventListener(ARCH_NAVIGATE_DELTA, handler);
+    return () => window.removeEventListener(ARCH_NAVIGATE_DELTA, handler);
+  }, [navigateArch]);
 
   // ── Listen for completed arch spline ────────────────────────────────────
   useEffect(() => {
@@ -567,7 +595,12 @@ export default function DentalCPRViewport({
       {/* ── VTK WebGL canvas ─────────────────────────────────────────────── */}
       <div
         ref={vtkContainerRef}
-        style={{ flex: 1, position: 'relative', background: '#050505' }}
+        style={{
+          flex: 1,
+          position: 'relative',
+          background: '#050505',
+          cursor: status === 'ready' ? 'col-resize' : 'default',
+        }}
       >
         {status === 'waiting' && (
           <div
@@ -619,7 +652,7 @@ export default function DentalCPRViewport({
           </div>
         )}
 
-        {/* Cross-section cursor line */}
+        {/* Cross-section cursor line — draggable indicator */}
         {cursorXPct !== null && (
           <div
             style={{
@@ -632,6 +665,7 @@ export default function DentalCPRViewport({
               opacity: 0.85,
               pointerEvents: 'none',
               zIndex: 10,
+              boxShadow: '0 0 4px #00aaff88',
             }}
           />
         )}
