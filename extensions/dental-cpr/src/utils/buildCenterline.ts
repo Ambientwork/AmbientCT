@@ -145,8 +145,6 @@ export function buildCenterlinePoints(
   const splinePts = catmullRomSpline(controlPoints, numSamples);
   const n = splinePts.length;
   const result: CenterlinePoint[] = [];
-  let prevN = [0, 0, 1];
-
   for (let i = 0; i < n; i++) {
     const iPrev = Math.max(0, i - 1);
     const iNext = Math.min(n - 1, i + 1);
@@ -158,26 +156,32 @@ export function buildCenterlinePoints(
     ];
     normalize(T);
 
-    const N = [0, 0, 0];
-    cross(T, prevN, N);
-    if (normalize(N) < 1e-6) {
-      cross([0, 0, 1], T, N);
-      if (normalize(N) < 1e-6) {
-        cross([0, 1, 0], T, N);
-        normalize(N);
-      }
+    // Stable anatomical frame (same world-Z approach as buildCenterline for CPR mapper):
+    //   N_stable ≈ world-Z (DICOM superior = tooth height direction)
+    //             = project [0,0,1] onto the plane perpendicular to T
+    //   B_stable = N_stable × T  (buccal-lingual, in the horizontal plane)
+    //
+    // This prevents the cross-section from rotating as the arch curves — the orientation
+    // stays consistently: top = crown (superior), horizontal = buccal-lingual.
+    const Tz = T[2];
+    const N_stable = [-T[0] * Tz, -T[1] * Tz, 1.0 - Tz * Tz];
+    if (normalize(N_stable) < 1e-6) {
+      // T is nearly vertical — fall back to world-X
+      N_stable[0] = 1 - T[0] * T[0]; N_stable[1] = -T[0] * T[1]; N_stable[2] = -T[0] * T[2];
+      normalize(N_stable);
     }
-    prevN = [...N];
+    const B_stable = [0, 0, 0];
+    cross(N_stable, T, B_stable);
+    normalize(B_stable);
 
-    const B = [0, 0, 0];
-    cross(T, N, B);
-    normalize(B);
-
+    // Cross-section renderer: world = point + normal*u + binormal*v
+    //   u = col offset (left → right)  → assign B_stable (buccal-lingual)
+    //   v = row offset (top → bottom)  → assign -N_stable (inferior; crown at top)
     result.push({
-      point: [...splinePts[i]] as [number, number, number],
-      tangent: [...T] as [number, number, number],
-      normal: [...N] as [number, number, number],
-      binormal: [...B] as [number, number, number],
+      point:    [...splinePts[i]] as [number, number, number],
+      tangent:  T as [number, number, number],
+      normal:   [...B_stable] as [number, number, number],
+      binormal: [-N_stable[0], -N_stable[1], -N_stable[2]] as [number, number, number],
     });
   }
 

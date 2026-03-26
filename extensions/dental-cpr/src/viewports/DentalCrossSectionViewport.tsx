@@ -50,9 +50,9 @@ const WL_HIGH = 400 + 1000; // 1400
  *       pixel = voxelManager.getAtIndex(voxel)
  *   → Pixels drawn to HTML canvas
  *
- * Coordinate system:
- *   Output image X = frame.normal   (buccal-lingual, left = lingual)
- *   Output image Y = frame.binormal (superior-inferior, up = crown)
+ * Coordinate system (stable — does NOT rotate as arch curves):
+ *   Output image X = frame.normal   (buccal-lingual; B_stable = N_world-Z × T)
+ *   Output image Y = frame.binormal (superior→inferior; top = crown, bottom = root apex)
  */
 export default function DentalCrossSectionViewport({
   displaySets,

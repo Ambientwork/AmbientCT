@@ -388,18 +388,12 @@ export default function DentalCPRViewport({
         //                  Y-axis (arch arc-length) runs left → right
         camera.setViewUp(1, 0, 0);
 
-        // Compute parallelScale so the FULL arch (imgH mm) fits in the viewport width.
-        // parallelScale = half the model-space height visible on screen.
-        // viewport_width_model = 2 × parallelScale × aspectRatio
-        // Solve for parallelScale: PS = imgH / (2 × aspectRatio)
-        // Also ensure tooth depth (imgW mm) is fully visible: PS ≥ imgW / 2
-        const glSize = openGLWindowRef.current
-          ? (openGLWindowRef.current as any).getSize?.() as [number, number] | undefined
-          : undefined;
-        const viewW = glSize?.[0] ?? container.clientWidth  ?? 400;
-        const viewH = glSize?.[1] ?? container.clientHeight ?? 600;
-        const aspect = viewH > 0 ? viewW / viewH : 1;
-        const parallelScale = Math.max(imgW / 2, imgH / (2 * aspect));
+        // parallelScale = half the visible height in world coords (with viewUp=(1,0,0),
+        // "height" = X-axis = tooth depth direction).
+        // Set to imgW/2 so the full crown-to-root depth (70 mm) fills the panel height.
+        // The arch (Y-axis) extends horizontally and will be partially cropped for long
+        // arches — the slider already lets the user navigate to any arch position.
+        const parallelScale = imgW / 2;
         camera.setParallelScale(parallelScale);
         renderer.resetCameraClippingRange();
         renderWindow.render();
