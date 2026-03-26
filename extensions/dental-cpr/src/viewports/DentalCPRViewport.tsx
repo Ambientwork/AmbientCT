@@ -221,7 +221,9 @@ export default function DentalCPRViewport({
     volumeLoader
       .createAndCacheVolume(volumeId, { imageIds })
       .then((vol: Types.IImageVolume) => {
-        vol.load();
+        // Delay load() by 2 s to let cbctAxial Cornerstone viewport register itself
+        // before autoLoad tries to render loaded frames to it (race condition fix).
+        setTimeout(() => vol.load(), 2000);
         console.log('[DentalCPR] Volume streaming started:', volumeId);
         setStatusMsg(
           'Click to place control points along the dental arch on the axial view. Double-click to complete.'
