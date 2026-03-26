@@ -1,6 +1,7 @@
 import React from 'react';
 import DentalCPRViewport from './DentalCPRViewport';
 import DentalContainerViewport from './DentalContainerViewport';
+import AxialArchOverlay from './AxialArchOverlay';
 
 /**
  * DentalViewRouter — the single viewport component for all panes.
@@ -35,7 +36,12 @@ export default function DentalViewRouter(props: any) {
     );
     const CornerstoneViewport = entry?.component;
     if (CornerstoneViewport) {
-      return <CornerstoneViewport {...props} />;
+      return (
+        <div style={{ position: 'relative', width: '100%', height: '100%' }}>
+          <CornerstoneViewport {...props} />
+          <AxialArchOverlay />
+        </div>
+      );
     }
     console.warn('[DentalViewRouter] CornerstoneViewport not found on window.extensionManager');
     return <div style={{ width: '100%', height: '100%', background: '#050505' }} />;
