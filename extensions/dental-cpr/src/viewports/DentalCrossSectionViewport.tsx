@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { cache } from '@cornerstonejs/core';
 import type { CenterlinePoint } from '../utils/buildCenterline';
+import { getSharedFrames } from '../utils/dentalState';
 
 export const ARCH_CROSS_SECTION_POSITION = 'DENTAL_ARCH_CROSS_SECTION_POSITION';
 /** Fired by cross-section viewport on wheel scroll — tells CPR viewport to step */
@@ -18,7 +19,11 @@ interface DentalCrossSectionViewportProps {
   servicesManager: any;
   extensionManager: any;
   commandsManager: any;
+  position?: number; // -1 = prev, 0 = center (default), +1 = next
 }
+
+// ~4mm at 300 frames over 150mm arch: step to adjacent prev/next cross-sections
+const CROSS_SECTION_STEP = 8;
 
 // 50 mm × 50 mm field at 0.25 mm/px → 200 × 200 pixel output
 const SLICE_SIZE_MM = 50;
@@ -56,6 +61,7 @@ const WL_HIGH = 400 + 1000; // 1400
  */
 export default function DentalCrossSectionViewport({
   displaySets,
+  position,
 }: DentalCrossSectionViewportProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [status, setStatus] = useState<'idle' | 'ready' | 'error'>('idle');
@@ -191,17 +197,23 @@ export default function DentalCrossSectionViewport({
   // ── Listen for cross-section position events ───────────────────────────────
   useEffect(() => {
     const handler = (evt: Event) => {
-      const { frame, splineIndex, numSamples } =
+      const { splineIndex, numSamples } =
         (evt as CustomEvent<CrossSectionEventDetail>).detail;
       currentIdxRef.current = splineIndex;
       totalSamplesRef.current = numSamples;
-      setSliceCounter({ idx: splineIndex, total: numSamples });
-      const pct = (splineIndex / Math.max(numSamples - 1, 1)) * 100;
+
+      const frames = getSharedFrames();
+      const offset = (position ?? 0) * CROSS_SECTION_STEP;
+      const renderIdx = Math.max(0, Math.min(numSamples - 1, splineIndex + offset));
+      const frame = frames[renderIdx] ?? (evt as CustomEvent<CrossSectionEventDetail>).detail.frame;
+
+      setSliceCounter({ idx: renderIdx, total: numSamples });
+      const pct = (renderIdx / Math.max(numSamples - 1, 1)) * 100;
       renderCrossSection(frame, pct);
     };
     window.addEventListener(ARCH_CROSS_SECTION_POSITION, handler);
     return () => window.removeEventListener(ARCH_CROSS_SECTION_POSITION, handler);
-  }, [renderCrossSection]);
+  }, [renderCrossSection, position]);
 
   // ── Mouse wheel: step along arch ───────────────────────────────────────────
   const onWheel = useCallback((e: React.WheelEvent) => {
@@ -239,7 +251,7 @@ export default function DentalCrossSectionViewport({
         }}
       >
         <span style={{ color: '#00aaff', fontWeight: 700, letterSpacing: '0.02em' }}>
-          ⊥ Cross-Section
+          {position === -1 ? '⊥ Prev' : position === 1 ? '⊥ Next' : '⊥ Center'}
         </span>
         <span style={{ color: statusColour, flex: 1, fontSize: 11 }}>
           {status === 'idle'

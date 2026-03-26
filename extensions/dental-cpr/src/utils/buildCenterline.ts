@@ -135,8 +135,12 @@ export interface CenterlinePoint {
 }
 
 /**
- * Returns the Frenet-Serret frames for each spline sample as plain JS objects.
- * Used by DentalCPRViewport to fire cross-section events on canvas click.
+ * Returns per-spline-sample frames as plain JS objects, using an arch-centroid-based
+ * stable buccal direction to eliminate orientation flipping as the arch curves.
+ *
+ * Cross-section image axes:
+ *   normal   (u, col) = buccal direction: u<0=lingual(left), u>0=buccal(right)
+ *   binormal (v, row) = inferior direction: v<0=superior(top=crown), v>0=inferior(bottom=root)
  */
 export function buildCenterlinePoints(
   controlPoints: Types.Point3[],
@@ -145,6 +149,13 @@ export function buildCenterlinePoints(
   const splinePts = catmullRomSpline(controlPoints, numSamples);
   const n = splinePts.length;
   const result: CenterlinePoint[] = [];
+
+  // Arch centroid (XY only — ignore Z variation from axial scrolling)
+  const centroid = [0, 0, 0];
+  for (const pt of splinePts) { centroid[0] += pt[0]; centroid[1] += pt[1]; }
+  centroid[0] /= n;
+  centroid[1] /= n;
+
   for (let i = 0; i < n; i++) {
     const iPrev = Math.max(0, i - 1);
     const iNext = Math.min(n - 1, i + 1);
@@ -156,31 +167,43 @@ export function buildCenterlinePoints(
     ];
     normalize(T);
 
-    // Stable anatomical frame (same world-Z approach as buildCenterline for CPR mapper):
-    //   N_stable ≈ world-Z (DICOM superior = tooth height direction)
-    //             = project [0,0,1] onto the plane perpendicular to T
-    //   B_stable = N_stable × T  (buccal-lingual, in the horizontal plane)
-    //
-    // This prevents the cross-section from rotating as the arch curves — the orientation
-    // stays consistently: top = crown (superior), horizontal = buccal-lingual.
+    // N_stable ≈ world-Z (superior/tooth-height direction), projected ⊥ to T
     const Tz = T[2];
     const N_stable = [-T[0] * Tz, -T[1] * Tz, 1.0 - Tz * Tz];
     if (normalize(N_stable) < 1e-6) {
-      // T is nearly vertical — fall back to world-X
-      N_stable[0] = 1 - T[0] * T[0]; N_stable[1] = -T[0] * T[1]; N_stable[2] = -T[0] * T[2];
+      N_stable[0] = 1 - T[0] * T[0];
+      N_stable[1] = -T[0] * T[1];
+      N_stable[2] = -T[0] * T[2];
       normalize(N_stable);
     }
-    const B_stable = [0, 0, 0];
-    cross(N_stable, T, B_stable);
-    normalize(B_stable);
 
-    // Cross-section renderer: world = point + normal*u + binormal*v
-    //   u = col offset (left → right)  → assign B_stable (buccal-lingual)
-    //   v = row offset (top → bottom)  → assign -N_stable (inferior; crown at top)
+    // Buccal direction = outward from arch centroid, projected ⊥ to T and ⊥ to N_stable
+    let bx = splinePts[i][0] - centroid[0];
+    let by = splinePts[i][1] - centroid[1];
+    let bz = 0; // ignore Z offset — arch is drawn in axial plane
+
+    // Remove T component
+    const dotT = bx * T[0] + by * T[1] + bz * T[2];
+    bx -= dotT * T[0]; by -= dotT * T[1]; bz -= dotT * T[2];
+
+    // Remove N_stable component (keep purely horizontal)
+    const dotN = bx * N_stable[0] + by * N_stable[1] + bz * N_stable[2];
+    bx -= dotN * N_stable[0]; by -= dotN * N_stable[1]; bz -= dotN * N_stable[2];
+
+    const buccal = [bx, by, bz];
+    if (normalize(buccal) < 1e-6) {
+      // Point near centroid — fall back to B_stable = N_stable × T
+      cross(N_stable, T, buccal);
+      normalize(buccal);
+    }
+
+    // Cross-section image axes:
+    //   normal   (u, col) = buccal direction: u<0=lingual(left), u>0=buccal(right)
+    //   binormal (v, row) = inferior direction: v<0=superior(top=crown), v>0=inferior(bottom=root)
     result.push({
       point:    [...splinePts[i]] as [number, number, number],
       tangent:  T as [number, number, number],
-      normal:   [...B_stable] as [number, number, number],
+      normal:   [...buccal] as [number, number, number],
       binormal: [-N_stable[0], -N_stable[1], -N_stable[2]] as [number, number, number],
     });
   }

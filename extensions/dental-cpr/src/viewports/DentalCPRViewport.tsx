@@ -16,6 +16,7 @@ import vtkOpenGLRenderWindow from '@kitware/vtk.js/Rendering/OpenGL/RenderWindow
 import { ProjectionMode } from '@kitware/vtk.js/Rendering/Core/ImageCPRMapper/Constants';
 import { buildCenterline, buildCenterlinePoints } from '../utils/buildCenterline';
 import type { CenterlinePoint } from '../utils/buildCenterline';
+import { setSharedFrames } from '../utils/dentalState';
 import { ARCH_SPLINE_COMPLETED } from '../tools/DentalArchSplineTool';
 import {
   ARCH_CROSS_SECTION_POSITION,
@@ -328,6 +329,7 @@ export default function DentalCPRViewport({
         // Also store frames for cross-section click events
         const cprFrames = buildCenterlinePoints(controlPoints, NUM_SAMPLES);
         splineFramesRef.current = cprFrames;
+        setSharedFrames(cprFrames);
 
         // Compute arc length from sampled points (mm)
         let arcLengthMm = 0;

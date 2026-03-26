@@ -1,6 +1,6 @@
 import React from 'react';
 import DentalCPRViewport from './DentalCPRViewport';
-import DentalCrossSectionViewport from './DentalCrossSectionViewport';
+import DentalContainerViewport from './DentalContainerViewport';
 
 /**
  * DentalViewRouter — the single viewport component for all panes.
@@ -18,10 +18,9 @@ import DentalCrossSectionViewport from './DentalCrossSectionViewport';
  * direct prop).
  *
  * Dispatch table:
- *   'cbctAxial'         → standard Cornerstone3D viewport (from extensionManager)
- *   'dentalCPR'         → DentalCPRViewport (vtk.js panoramic)
- *   'dentalCrossSection'→ DentalCrossSectionViewport (vtk.js cross-section)
- *   'dentalEmpty'       → empty dark placeholder (required 4th slot in 2x2 grid)
+ *   'cbctAxial'       → standard Cornerstone3D viewport (from extensionManager)
+ *   'dentalContainer' → DentalContainerViewport (panoramic top 60% + 3 cross-sections bottom 40%)
+ *   'dentalEmpty'     → empty dark placeholder
  */
 export default function DentalViewRouter(props: any) {
   const { viewportId } = props;
@@ -42,8 +41,8 @@ export default function DentalViewRouter(props: any) {
     return <div style={{ width: '100%', height: '100%', background: '#050505' }} />;
   }
 
-  if (viewportId === 'dentalCrossSection') {
-    return <DentalCrossSectionViewport {...props} />;
+  if (viewportId === 'dentalContainer') {
+    return <DentalContainerViewport {...props} />;
   }
 
   if (viewportId === 'dentalEmpty' || !viewportId) {
