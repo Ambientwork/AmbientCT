@@ -25,9 +25,11 @@ interface DentalCrossSectionViewportProps {
 // ~4mm at 300 frames over 150mm arch: step to adjacent prev/next cross-sections
 export const CROSS_SECTION_STEP = 8;
 
-// 50 mm × 50 mm field at 0.25 mm/px → 200 × 200 pixel output
-const SLICE_SIZE_MM = 50;
-const MM_PER_PX = 0.25;
+// 80 mm × 80 mm field at 0.40 mm/px → 200 × 200 pixel output
+// 80 mm covers: ~40 mm above occlusal plane (maxillary sinus) +
+//               ~40 mm below (root apices at 30–35 mm + jaw bone margin).
+const SLICE_SIZE_MM = 80;
+const MM_PER_PX = 0.40;
 const NUM_PX = Math.round(SLICE_SIZE_MM / MM_PER_PX); // 200
 
 // Bone window: W=2000, L=400 → [-600 HU … 1400 HU]
@@ -153,7 +155,7 @@ export default function DentalCrossSectionViewport({
 
       for (let row = 0; row < NUM_PX; row++) {
         for (let col = 0; col < NUM_PX; col++) {
-          // u = col offset (along N = buccal-lingual), v = row offset (along B = superior)
+          // u = col offset (along N = buccal-lingual), v = row offset (along B = inferior)
           const u = (col - half) * MM_PER_PX;
           const v = (row - half) * MM_PER_PX;
 
@@ -179,9 +181,9 @@ export default function DentalCrossSectionViewport({
             ));
           }
 
-          // Flip vertically: row 0 (canvas top) = inferior (root), row MAX = superior (crown)
-          const flippedRow = NUM_PX - 1 - row;
-          const i4 = (flippedRow * NUM_PX + col) * 4;
+          // No flip: row 0 (canvas top) = superior (crown/sinus = Oberkiefer),
+          //          row MAX = inferior (root/jaw = Unterkiefer)
+          const i4 = (row * NUM_PX + col) * 4;
           data[i4]     = gray;
           data[i4 + 1] = gray;
           data[i4 + 2] = gray;
@@ -287,9 +289,12 @@ export default function DentalCrossSectionViewport({
           ref={canvasRef}
           style={{
             display: status === 'idle' ? 'none' : 'block',
-            width: '100%',
+            // <canvas> ignores objectFit. Use height:100% + aspectRatio:1 so the
+            // canvas fills the full panel height as a square, never overflowing width.
             height: '100%',
-            objectFit: 'contain',
+            width: 'auto',
+            aspectRatio: '1 / 1',
+            maxWidth: '100%',
             imageRendering: 'pixelated',
           }}
         />

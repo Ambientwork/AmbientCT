@@ -325,10 +325,19 @@ export default function DentalCPRViewport({
 
       try {
         const NUM_SAMPLES = 300;
+
+        // Normalise all control points to the median Z so the arch stays flat in
+        // a single axial plane.  Without this, points placed on different slices
+        // make the centerline undulate in Z, causing each CPR column to sample a
+        // different depth region and the panoramic to show uneven vertical height.
+        const sortedZ = [...controlPoints].map(p => p[2]).sort((a, b) => a - b);
+        const medianZ = sortedZ[Math.floor(sortedZ.length / 2)];
+        const flatPoints = controlPoints.map(p => [p[0], p[1], medianZ] as Types.Point3);
+
         // Build Catmull-Rom centerline polydata (300 samples for smooth panoramic)
-        const centerline = buildCenterline(controlPoints, NUM_SAMPLES);
+        const centerline = buildCenterline(flatPoints, NUM_SAMPLES);
         // Also store frames for cross-section click events
-        const cprFrames = buildCenterlinePoints(controlPoints, NUM_SAMPLES);
+        const cprFrames = buildCenterlinePoints(flatPoints, NUM_SAMPLES);
         splineFramesRef.current = cprFrames;
         setSharedFrames(cprFrames);
 
@@ -340,81 +349,79 @@ export default function DentalCPRViewport({
           arcLengthMm += Math.sqrt((x1 - x0) ** 2 + (y1 - y0) ** 2 + (z1 - z0) ** 2);
         }
 
+        // Camera geometry (with viewUp=[1,0,0]):
+        //   screen-vertical  = world-X = tooth depth (crown → root)
+        //   screen-horizontal = world-Y = arch arc-length
+        //
+        // Strategy: fit the FULL arch into the panel width, then set mapper.setWidth()
+        // to exactly the tooth depth that fills the panel height at that zoom.
+        // This guarantees both axes fill the viewport with no wasted space.
+        //
+        //   parallelScale = arcLength / (2 × aspectRatio)   ← fills width
+        //   depthMm       = parallelScale × 2               ← exactly fills height
+        const container = vtkContainerRef.current;
+        const vpW = container?.clientWidth  || 700;
+        const vpH = container?.clientHeight || 400;
+        const aspectRatio = Math.max(vpW / vpH, 0.1);
+
+        // archScale: minimum parallelScale needed to fit the full arch width on screen
+        const archScale = (arcLengthMm / (2 * aspectRatio)) * 1.05;
+
+        // depthMm: use the actual CT scan height (Z-extent of the volume) so the
+        // full volume is always visible without cropping.
+        const volDims    = volume.imageData.getDimensions?.() ?? [1, 1, 1];
+        const volSpacing = volume.imageData.getSpacing?.()    ?? [1, 1, 1];
+        const scanHeightMm = volDims[2] * volSpacing[2];
+        const depthMm = Math.max(archScale * 2, scanHeightMm, 80);
+
+        // parallelScale must be ≥ archScale (fits arch) AND ≥ depthMm/2 (shows full height).
+        const parallelScale = Math.max(archScale, depthMm / 2);
+
         // Wire vtkImageCPRMapper
         const mapper = vtkImageCPRMapper.newInstance();
         mapper.setImageData(imgData ?? volume.imageData); // port 0 — CBCT volume
         mapper.setCenterlineData(centerline);       // port 1 — arch centerline
 
-        // Straightened CPR: output is a flat rectangle at Z=0 in local model space.
-        //   X: [0..width=70mm]   = buccal-lingual depth (across teeth)
-        //   Y: [0..arcLength mm] = arc length along dental arch
-        //   Z: 0 (flat image plane)
         mapper.useStraightenedMode();
-        mapper.setWidth(70); // 70 mm covers crown to root apex (model coords = mm for DICOM)
+        mapper.setWidth(depthMm); // exactly fills the panel height
         mapper.setOrientationArrayName('Orientation');
         mapper.setUseUniformOrientation(false);
 
-        // Our quaternion at each point maps:
-        //   Q * [1,0,0] = N_new = tooth height (Z)  → tangentDirection (image X = width, crown→root)
-        //   Q * [0,1,0] = T    = arch tangent        → normalDirection  (image Y = arc length)
-        //   Q * [0,0,1] = B_new = buccal-lingual     → bitangentDirection (MIP focal trough slab)
-        (mapper as any).setTangentDirection([1, 0, 0]);   // tooth height = width (70mm crown to root)
-        (mapper as any).setBitangentDirection([0, 0, 1]); // buccal-lingual = MIP slab (focal trough)
-        (mapper as any).setNormalDirection([0, 1, 0]);    // arch tangent = arc length
+        (mapper as any).setTangentDirection([1, 0, 0]);   // tooth depth = world-X = screen-vertical
+        (mapper as any).setBitangentDirection([0, 0, 1]); // buccal-lingual = MIP slab
+        (mapper as any).setNormalDirection([0, 1, 0]);    // arch tangent = world-Y = screen-horizontal
 
-        // MIP slab along tooth height — simulates panoramic focal trough
+        // MIP slab along buccal-lingual — simulates panoramic focal trough
         mapper.setProjectionSlabThickness(slabMm);
         mapper.setProjectionSlabNumberOfSamples(slabMm * 5 + 1); // must be odd
         mapper.setProjectionMode(ProjectionMode.MAX);
 
         const actor = vtkImageSlice.newInstance();
         actor.setMapper(mapper);
-        // Bone window for dental CBCT (HU -500 to +1500 → W=2000, L=500)
         actor.getProperty().setColorWindow(2000);
         actor.getProperty().setColorLevel(500);
 
         renderer.addActor(actor);
 
-        // The CPR actor lives in local model space at Z=0: X=[0,70], Y=[0,arcLen].
-        // Camera orientation: viewUp=(1,0,0) → X-axis (tooth depth) runs vertically,
-        // Y-axis (arch arc-length) runs horizontally → traditional horizontal panoramic.
-        // parallelScale accounts for the viewport aspect ratio so the full arch (Y)
-        // fits horizontally within the panel.
-        const bounds = actor.getBounds?.() ?? [0, 70, 0, arcLengthMm, 0, 0];
-        const imgW = bounds[1] ?? 70;          // tooth depth in mm (X axis, 0–70 mm)
-        const imgH = bounds[3] ?? arcLengthMm; // arch length in mm (Y axis)
         const camera = renderer.getActiveCamera();
         camera.setParallelProjection(true);
-        camera.setFocalPoint(imgW / 2, imgH / 2, 0);
-        camera.setPosition(imgW / 2, imgH / 2, 500);
-        // viewUp=(1,0,0): X-axis (tooth depth) points UP on screen,
-        //                  Y-axis (arch arc-length) runs LEFT → RIGHT.
-        camera.setViewUp(1, 0, 0);
 
-        // parallelScale = half the visible world-space height (screen-Y direction).
-        // With viewUp=(1,0,0), screen-Y = world-X (tooth depth) and
-        //                       screen-X = world-Y (arch length).
-        //
-        // To fit the full arch horizontally:
-        //   visible_world_width = parallelScale * 2 * aspectRatio ≥ arcLengthMm
-        //   → scaleForArch = arcLengthMm / (2 * aspectRatio)
-        //
-        // To fit full tooth depth vertically:
-        //   → scaleForDepth = imgW / 2
-        //
-        // Take the larger of both so neither dimension is cropped, then add 5% padding.
-        const container = vtkContainerRef.current;
-        const vpW = container?.clientWidth  || 700;
-        const vpH = container?.clientHeight || 400;
-        const aspectRatio = vpW / vpH;
-        const scaleForArch  = imgH / (2 * aspectRatio); // fit arch horizontally
-        const scaleForDepth = imgW / 2;                  // fit tooth depth vertically
-        const parallelScale = Math.max(scaleForArch, scaleForDepth) * 1.05; // 5% margin
-        camera.setParallelScale(parallelScale);
+        // Step 1: first render so the CPR mapper computes its output image and
+        // the actor reports correct world-space bounds.
+        renderWindow.render();
+
+        // Step 2: set viewUp BEFORE resetCamera so vtk.js fits the frustum
+        // around the correct axis. viewUp=[1,0,0] makes world-X go UP on screen
+        // (tooth depth = vertical, arch length = horizontal).
+        // resetCamera() respects the current viewUp when sizing parallelScale.
+        camera.setViewUp(1, 0, 0);
+        renderer.resetCamera();
+        camera.setParallelScale(camera.getParallelScale() * 1.05); // 5 % margin
         renderer.resetCameraClippingRange();
         renderWindow.render();
 
         console.log('[DentalCPR] CPR rendered — arc:', Math.round(arcLengthMm), 'mm',
+          '| depthMm:', Math.round(depthMm),
           '| actor bounds:', actor.getBounds?.().map((v: number) => v.toFixed(1)).join(','),
           '| parallelScale:', camera.getParallelScale?.().toFixed(1));
 
