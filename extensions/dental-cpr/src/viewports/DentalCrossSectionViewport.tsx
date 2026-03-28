@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { cache } from '@cornerstonejs/core';
 import type { CenterlinePoint } from '../utils/buildCenterline';
-import { getSharedFrames } from '../utils/dentalState';
+import { getSharedFrames, getSharedArcFractions, getSharedTotalArcMm } from '../utils/dentalState';
 
 export const ARCH_CROSS_SECTION_POSITION = 'DENTAL_ARCH_CROSS_SECTION_POSITION';
 /** Fired by cross-section viewport on wheel scroll — tells CPR viewport to step */
@@ -106,7 +106,7 @@ export default function DentalCrossSectionViewport({
 
   // ── CPU cross-section rasteriser ───────────────────────────────────────────
   const renderCrossSection = useCallback(
-    (frame: CenterlinePoint, positionPct: number) => {
+    (frame: CenterlinePoint, positionMm: number, totalMm: number) => {
       const canvas = canvasRef.current;
       if (!canvas) return;
 
@@ -193,7 +193,7 @@ export default function DentalCrossSectionViewport({
 
       ctx.putImageData(pixels, 0, 0);
       setStatus('ready');
-      setPositionLabel(`${positionPct.toFixed(0)}%`);
+      setPositionLabel(`${positionMm.toFixed(1)} / ${totalMm.toFixed(0)} mm`);
     },
     [getVolume]
   );
@@ -212,8 +212,11 @@ export default function DentalCrossSectionViewport({
       const frame = frames[renderIdx] ?? (evt as CustomEvent<CrossSectionEventDetail>).detail.frame;
 
       setSliceCounter({ idx: renderIdx, total: numSamples });
-      const pct = (renderIdx / Math.max(numSamples - 1, 1)) * 100;
-      renderCrossSection(frame, pct);
+      // Show real mm position along arch (arc-length based), not index-percentage
+      const fracs   = getSharedArcFractions();
+      const totalMm = getSharedTotalArcMm();
+      const arcFrac = fracs.length > renderIdx ? fracs[renderIdx] : renderIdx / Math.max(numSamples - 1, 1);
+      renderCrossSection(frame, arcFrac * totalMm, totalMm);
     };
     window.addEventListener(ARCH_CROSS_SECTION_POSITION, handler);
     return () => window.removeEventListener(ARCH_CROSS_SECTION_POSITION, handler);

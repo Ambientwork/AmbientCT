@@ -16,7 +16,7 @@ import vtkOpenGLRenderWindow from '@kitware/vtk.js/Rendering/OpenGL/RenderWindow
 import { ProjectionMode } from '@kitware/vtk.js/Rendering/Core/ImageCPRMapper/Constants';
 import { buildCenterline, buildCenterlinePoints } from '../utils/buildCenterline';
 import type { CenterlinePoint } from '../utils/buildCenterline';
-import { setSharedFrames } from '../utils/dentalState';
+import { setSharedFrames, setSharedArcData, getSharedTotalArcMm } from '../utils/dentalState';
 import { ARCH_SPLINE_COMPLETED } from '../tools/DentalArchSplineTool';
 import {
   ARCH_CROSS_SECTION_POSITION,
@@ -69,20 +69,39 @@ export default function DentalCPRViewport({
   const [slabMm, setSlabMm] = useState(10);
 
   // Spline frames stored after each arch completion — used for cross-section clicks
-  const splineFramesRef = useRef<CenterlinePoint[]>([]);
+  const splineFramesRef   = useRef<CenterlinePoint[]>([]);
+  // Arc-length fractions[i] = cumulative arc from 0→i / total arc (0..1)
+  const arcFractionsRef   = useRef<Float32Array>(new Float32Array(0));
 
-  // Cross-section cursor position (0-100 %) — state for rendering, ref for event handlers
-  const [cursorXPct, setCursorXPct] = useState<number | null>(null);
-  const cursorXPctRef = useRef<number>(50);
+  // Cross-section cursor position as arc-fraction (0-1) — state for rendering, ref for event handlers
+  const [cursorArcFrac, setCursorArcFrac] = useState<number | null>(null);
+  const cursorArcFracRef = useRef<number>(0.5);
 
-  // Navigate cross-section via slider, click, drag, or wheel
+  // Navigate cross-section via slider, click, drag, or wheel.
+  // `pct` is a panel-% (0-100).  We map it to the closest arch sample by arc-length.
   const navigateArch = useCallback((pct: number) => {
     const frames = splineFramesRef.current;
+    const fracs  = arcFractionsRef.current;
     if (!frames.length) return;
-    const clamped = Math.max(0, Math.min(100, pct));
-    cursorXPctRef.current = clamped;
-    const idx = Math.round((clamped / 100) * (frames.length - 1));
-    setCursorXPct(clamped);
+
+    const frac = Math.max(0, Math.min(1, pct / 100));
+    cursorArcFracRef.current = frac;
+
+    // Binary-search fracs[] to find the index whose arc-fraction is closest to frac
+    let idx = 0;
+    if (fracs.length === frames.length && fracs.length > 1) {
+      let lo = 0, hi = fracs.length - 1;
+      while (lo < hi) {
+        const mid = (lo + hi) >> 1;
+        if (fracs[mid] < frac) lo = mid + 1;
+        else hi = mid;
+      }
+      idx = lo;
+    } else {
+      idx = Math.round(frac * (frames.length - 1));
+    }
+
+    setCursorArcFrac(fracs.length ? fracs[idx] : frac);
     window.dispatchEvent(new CustomEvent(ARCH_CROSS_SECTION_POSITION, {
       detail: { frame: frames[idx], splineIndex: idx, numSamples: frames.length },
     }));
@@ -164,7 +183,7 @@ export default function DentalCPRViewport({
       if (!splineFramesRef.current.length) return;
       e.preventDefault();
       const step = e.deltaY > 0 ? 2 : -2;
-      navigateArch(cursorXPctRef.current + step);
+      navigateArch(cursorArcFracRef.current * 100 + step);
     };
 
     container.addEventListener('mousedown', onMouseDown);
@@ -341,13 +360,23 @@ export default function DentalCPRViewport({
         splineFramesRef.current = cprFrames;
         setSharedFrames(cprFrames);
 
-        // Compute arc length from sampled points (mm)
+        // Compute cumulative arc lengths (mm) and normalised fractions.
+        // These are stored globally so cross-section viewports can show real mm positions.
+        const cumArc = new Float32Array(cprFrames.length);
         let arcLengthMm = 0;
         for (let i = 1; i < cprFrames.length; i++) {
           const [x0, y0, z0] = cprFrames[i - 1].point;
           const [x1, y1, z1] = cprFrames[i].point;
           arcLengthMm += Math.sqrt((x1 - x0) ** 2 + (y1 - y0) ** 2 + (z1 - z0) ** 2);
+          cumArc[i] = arcLengthMm;
         }
+        // Normalise to 0-1
+        const arcFracs = new Float32Array(cprFrames.length);
+        for (let i = 0; i < cprFrames.length; i++) {
+          arcFracs[i] = arcLengthMm > 0 ? cumArc[i] / arcLengthMm : i / (cprFrames.length - 1);
+        }
+        arcFractionsRef.current = arcFracs;
+        setSharedArcData(arcFracs, arcLengthMm);
 
         // Camera geometry (with viewUp=[1,0,0]):
         //   screen-vertical  = world-X = tooth depth (crown → root)
@@ -433,9 +462,17 @@ export default function DentalCPRViewport({
           'Draw a new arch to update.'
         );
 
-        // Auto-fire cross-section at arch midpoint so the bottom-left panel shows
-        // something immediately without requiring a user click
-        const midIdx = Math.floor(cprFrames.length / 2);
+        // Auto-fire cross-section at arch midpoint (by arc-length) so cross-section
+        // panels show something immediately without a user click
+        const midFrac = 0.5;
+        let midIdx = Math.floor(cprFrames.length / 2);
+        { // binary-search arcFracs for midpoint
+          let lo = 0, hi = arcFracs.length - 1;
+          while (lo < hi) { const m = (lo+hi)>>1; if (arcFracs[m] < midFrac) lo=m+1; else hi=m; }
+          midIdx = lo;
+        }
+        cursorArcFracRef.current = midFrac;
+        setCursorArcFrac(midFrac);
         window.dispatchEvent(
           new CustomEvent(ARCH_CROSS_SECTION_POSITION, {
             detail: {
@@ -458,8 +495,11 @@ export default function DentalCPRViewport({
   // ── Cursor line + keyboard navigation ───────────────────────────────────
   useEffect(() => {
     const handler = (evt: Event) => {
-      const { splineIndex, numSamples } = (evt as CustomEvent<CrossSectionEventDetail>).detail;
-      setCursorXPct((splineIndex / Math.max(numSamples - 1, 1)) * 100);
+      const { splineIndex } = (evt as CustomEvent<CrossSectionEventDetail>).detail;
+      const fracs = arcFractionsRef.current;
+      const frac  = fracs.length > splineIndex ? fracs[splineIndex] : splineIndex / Math.max((evt as CustomEvent<CrossSectionEventDetail>).detail.numSamples - 1, 1);
+      cursorArcFracRef.current = frac;
+      setCursorArcFrac(frac);
     };
     window.addEventListener(ARCH_CROSS_SECTION_POSITION, handler);
     return () => window.removeEventListener(ARCH_CROSS_SECTION_POSITION, handler);
@@ -468,8 +508,8 @@ export default function DentalCPRViewport({
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (!splineFramesRef.current.length) return;
-      if (e.key === 'ArrowLeft') { e.preventDefault(); navigateArch(cursorXPctRef.current - 2); }
-      if (e.key === 'ArrowRight') { e.preventDefault(); navigateArch(cursorXPctRef.current + 2); }
+      if (e.key === 'ArrowLeft') { e.preventDefault(); navigateArch(cursorArcFracRef.current * 100 - 2); }
+      if (e.key === 'ArrowRight') { e.preventDefault(); navigateArch(cursorArcFracRef.current * 100 + 2); }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
@@ -598,13 +638,13 @@ export default function DentalCPRViewport({
             min={0}
             max={100}
             step={0.5}
-            value={cursorXPct ?? 50}
+            value={(cursorArcFrac ?? 0.5) * 100}
             onChange={e => navigateArch(Number(e.target.value))}
             style={{ flex: 1, accentColor: '#00aaff', cursor: 'pointer' }}
           />
           <span>▶</span>
-          <span style={{ color: '#555', minWidth: 36, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
-            {Math.round(cursorXPct ?? 50)}%
+          <span style={{ color: '#555', minWidth: 44, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
+            {Math.round((cursorArcFrac ?? 0.5) * getSharedTotalArcMm())}mm
           </span>
         </div>
       )}
@@ -670,17 +710,31 @@ export default function DentalCPRViewport({
         )}
 
         {/* Cross-section cursor lines: ⊥ Prev (dashed), ⊥ Center (solid), ⊥ Next (dashed) */}
-        {cursorXPct !== null && (() => {
-          const numSamples = splineFramesRef.current.length || 1;
-          const stepPct = (CROSS_SECTION_STEP / numSamples) * 100;
-          const prevPct = Math.max(0, cursorXPct - stepPct);
-          const nextPct = Math.min(100, cursorXPct + stepPct);
+        {cursorArcFrac !== null && (() => {
+          const fracs     = arcFractionsRef.current;
+          const cursorPct = (cursorArcFrac ?? 0.5) * 100;
+          // Find nearest index for prev/next cursor lines using arc-fractions
+          const frames    = splineFramesRef.current;
+          const numSamples = frames.length || 1;
+          let centerIdx = 0;
+          if (fracs.length === numSamples && numSamples > 1) {
+            let lo = 0, hi = numSamples - 1;
+            const frac = cursorArcFrac ?? 0.5;
+            while (lo < hi) { const m = (lo+hi)>>1; if (fracs[m] < frac) lo=m+1; else hi=m; }
+            centerIdx = lo;
+          } else {
+            centerIdx = Math.round((cursorArcFrac ?? 0.5) * (numSamples - 1));
+          }
+          const prevIdx = Math.max(0, centerIdx - CROSS_SECTION_STEP);
+          const nextIdx = Math.min(numSamples - 1, centerIdx + CROSS_SECTION_STEP);
+          const prevPct = (fracs.length === numSamples ? fracs[prevIdx] : prevIdx / (numSamples - 1)) * 100;
+          const nextPct = (fracs.length === numSamples ? fracs[nextIdx] : nextIdx / (numSamples - 1)) * 100;
           const dashedBg = 'repeating-linear-gradient(to bottom, #00aaff 0px, #00aaff 5px, transparent 5px, transparent 10px)';
           return (
             <>
               <div style={{ position: 'absolute', left: `${prevPct}%`, top: 0, bottom: 0, width: 1,
                 background: dashedBg, opacity: 0.7, pointerEvents: 'none', zIndex: 10 }} />
-              <div style={{ position: 'absolute', left: `${cursorXPct}%`, top: 0, bottom: 0, width: 2,
+              <div style={{ position: 'absolute', left: `${cursorPct}%`, top: 0, bottom: 0, width: 2,
                 background: '#00aaff', opacity: 0.9, pointerEvents: 'none', zIndex: 11,
                 boxShadow: '0 0 5px #00aaff99' }} />
               <div style={{ position: 'absolute', left: `${nextPct}%`, top: 0, bottom: 0, width: 1,

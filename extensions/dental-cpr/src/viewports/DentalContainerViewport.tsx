@@ -62,34 +62,64 @@ export default function DentalContainerViewport(props: any) {
       const frames = getSharedFrames();
       if (!frames.length) return;
 
+      // ── Shared orientation from CENTER frame so all 3 rectangles are parallel ──
+      const centerIdx = Math.max(0, Math.min(numSamples - 1, splineIndex));
+      const cf = frames[centerIdx];
+      if (!cf) return;
+
+      const [Nx, Ny, Nz] = cf.normal;   // buccal-lingual (cross-section width axis)
+      const [Bx, By, Bz] = cf.binormal; // inferior direction (≈ world -Z)
+      // Arch tangent T = N × B (gives the along-arch direction in the axial plane)
+      const Tx_raw = Ny * Bz - Nz * By;
+      const Ty_raw = Nz * Bx - Nx * Bz;
+      const Tz_raw = Nx * By - Ny * Bx;
+      const Tlen = Math.sqrt(Tx_raw ** 2 + Ty_raw ** 2 + Tz_raw ** 2) || 1;
+      const [Tx, Ty, Tz] = [Tx_raw / Tlen, Ty_raw / Tlen, Tz_raw / Tlen];
+
+      // Rectangle geometry:
+      //   ±FAR_MM   along N = buccal-lingual width (= cross-section field width)
+      //   ±HALF_D   along T = arch-tangent depth  (= half the 3-D distance between Prev and Next frames)
+      const prevFrame = frames[Math.max(0, centerIdx - CROSS_SECTION_STEP)];
+      const nextFrame = frames[Math.min(numSamples - 1, centerIdx + CROSS_SECTION_STEP)];
+      const [ppx, ppy, ppz] = prevFrame?.point ?? cf.point;
+      const [npx, npy, npz] = nextFrame?.point ?? cf.point;
+      const stepDist = Math.sqrt((npx-ppx)**2 + (npy-ppy)**2 + (npz-ppz)**2);
+      const HALF_D = stepDist / 2; // half the Prev→Next distance
+
       // prev=dashed blue, center=solid green, next=dashed blue
       const slots = [
-        { offset: -CROSS_SECTION_STEP, color: '#00aaff', dash: [6, 4] as number[], width: 1.5 },
-        { offset: 0,                   color: '#00ff88', dash: [] as number[],      width: 2   },
-        { offset:  CROSS_SECTION_STEP, color: '#00aaff', dash: [6, 4] as number[], width: 1.5 },
+        { offset: -CROSS_SECTION_STEP, color: '#00aaff', dash: [5, 4] as number[], lw: 1.5 },
+        { offset: 0,                   color: '#00ff88', dash: [] as number[],      lw: 2   },
+        { offset:  CROSS_SECTION_STEP, color: '#00aaff', dash: [5, 4] as number[], lw: 1.5 },
       ];
 
-      for (const { offset, color, dash, width } of slots) {
+      for (const { offset, color, dash, lw } of slots) {
         const idx = Math.max(0, Math.min(numSamples - 1, splineIndex + offset));
         const frame = frames[idx];
         if (!frame) continue;
 
-        const { point, normal: N } = frame;
-        // The cross-section plane intersects the axial slice as a line through
-        // frame.point in the N (buccal-lingual) direction.
-        const p1 = [point[0] + N[0] * FAR_MM, point[1] + N[1] * FAR_MM, point[2] + N[2] * FAR_MM];
-        const p2 = [point[0] - N[0] * FAR_MM, point[1] - N[1] * FAR_MM, point[2] - N[2] * FAR_MM];
+        const [px, py, pz] = frame.point;
 
-        const c1 = vp.worldToCanvas(p1 as any);
-        const c2 = vp.worldToCanvas(p2 as any);
+        // Four corners of the cross-section rectangle projected onto the axial plane:
+        //   width  = 80 mm along N (center frame's buccal-lingual axis)
+        //   height = 4 mm along T (arch-tangent, shows slice position/thickness)
+        const corners = [
+          [px + Nx * FAR_MM + Tx * HALF_D, py + Ny * FAR_MM + Ty * HALF_D, pz + Nz * FAR_MM + Tz * HALF_D],
+          [px - Nx * FAR_MM + Tx * HALF_D, py - Ny * FAR_MM + Ty * HALF_D, pz - Nz * FAR_MM + Tz * HALF_D],
+          [px - Nx * FAR_MM - Tx * HALF_D, py - Ny * FAR_MM - Ty * HALF_D, pz - Nz * FAR_MM - Tz * HALF_D],
+          [px + Nx * FAR_MM - Tx * HALF_D, py + Ny * FAR_MM - Ty * HALF_D, pz + Nz * FAR_MM - Tz * HALF_D],
+        ].map(p => vp.worldToCanvas(p as any));
 
         ctx.save();
         ctx.beginPath();
         ctx.strokeStyle = color;
-        ctx.lineWidth   = width;
+        ctx.lineWidth   = lw;
         ctx.setLineDash(dash);
-        ctx.moveTo(c1[0], c1[1]);
-        ctx.lineTo(c2[0], c2[1]);
+        ctx.moveTo(corners[0][0], corners[0][1]);
+        ctx.lineTo(corners[1][0], corners[1][1]);
+        ctx.lineTo(corners[2][0], corners[2][1]);
+        ctx.lineTo(corners[3][0], corners[3][1]);
+        ctx.closePath();
         ctx.stroke();
         ctx.restore();
       }
