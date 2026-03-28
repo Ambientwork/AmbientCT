@@ -39,6 +39,36 @@ export interface DentalArchAnnotation {
 }
 
 /**
+ * Catmull-Rom spline sampler.
+ * Returns `numPerSegment` interpolated 3-D points per segment between consecutive
+ * control points, plus the final endpoint.  Boundary points are duplicated so
+ * the curve passes exactly through the first and last control points.
+ */
+function sampleCatmullRom(pts: Types.Point3[], numPerSegment: number): Types.Point3[] {
+  if (pts.length < 2) return [...pts];
+
+  // Duplicate boundary points so the curve reaches the endpoints
+  const p = [pts[0], ...pts, pts[pts.length - 1]];
+  const out: Types.Point3[] = [];
+
+  for (let seg = 0; seg < pts.length - 1; seg++) {
+    const [p0, p1, p2, p3] = [p[seg], p[seg + 1], p[seg + 2], p[seg + 3]];
+    for (let k = 0; k < numPerSegment; k++) {
+      const t  = k / numPerSegment;
+      const t2 = t * t;
+      const t3 = t2 * t;
+      out.push([
+        0.5 * (2*p1[0] + (-p0[0]+p2[0])*t + (2*p0[0]-5*p1[0]+4*p2[0]-p3[0])*t2 + (-p0[0]+3*p1[0]-3*p2[0]+p3[0])*t3),
+        0.5 * (2*p1[1] + (-p0[1]+p2[1])*t + (2*p0[1]-5*p1[1]+4*p2[1]-p3[1])*t2 + (-p0[1]+3*p1[1]-3*p2[1]+p3[1])*t3),
+        0.5 * (2*p1[2] + (-p0[2]+p2[2])*t + (2*p0[2]-5*p1[2]+4*p2[2]-p3[2])*t2 + (-p0[2]+3*p1[2]-3*p2[2]+p3[2])*t3),
+      ] as Types.Point3);
+    }
+  }
+  out.push(pts[pts.length - 1]);
+  return out;
+}
+
+/**
  * DentalArchSplineTool
  *
  * Click to place control points along the dental arch on an axial CBCT slice.
@@ -229,31 +259,36 @@ export default class DentalArchSplineTool extends AnnotationTool {
     for (const ann of annotations) {
       if (!ann.isVisible) continue;
 
-      const canvasPoints = ann.data.controlPoints.map(p => viewport.worldToCanvas(p));
-      if (canvasPoints.length < 1) continue;
+      const pts = ann.data.controlPoints;
+      if (pts.length < 1) continue;
 
-      // Polyline connecting control points
-      if (canvasPoints.length > 1) {
-        drawPolyline(
-          svgDrawingHelper,
-          ann.annotationUID,
-          'archPolyline',
-          canvasPoints,
-          {
-            color: ann.data.isComplete ? '#00ff88' : '#ffcc00',
-            lineWidth: 2,
-            lineDash: ann.data.isComplete ? '' : '6,4',
-          }
-        );
-      }
-
-      // Control point handles
+      // Control point handles (always drawn on the original control points)
+      const handlePoints = pts.map(p => viewport.worldToCanvas(p));
       drawHandles(
         svgDrawingHelper,
         ann.annotationUID,
         'archHandles',
-        canvasPoints,
+        handlePoints,
         { color: '#00aaff', handleRadius: 4, lineWidth: 2 }
+      );
+
+      if (pts.length < 2) continue;
+
+      // Smooth Catmull-Rom curve through control points (10 samples per segment).
+      // Boundary points are duplicated so the curve passes through the first and last points.
+      const smoothWorld = sampleCatmullRom(pts, 10);
+      const smoothCanvas = smoothWorld.map(p => viewport.worldToCanvas(p));
+
+      drawPolyline(
+        svgDrawingHelper,
+        ann.annotationUID,
+        'archPolyline',
+        smoothCanvas,
+        {
+          color: ann.data.isComplete ? '#00ff88' : '#ffcc00',
+          lineWidth: 2,
+          lineDash: ann.data.isComplete ? '' : '6,4',
+        }
       );
     }
 
