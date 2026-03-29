@@ -29,6 +29,8 @@ export default function ViewerToolbar({
       fontFamily: Font.family,
       fontSize: 12,
       color: Colors.text,
+      position: 'relative',
+      zIndex: 100,
     }}>
       {/* Breadcrumb */}
       <button
