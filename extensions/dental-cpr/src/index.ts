@@ -2,6 +2,9 @@ import id from './id';
 import DentalViewRouter from './viewports/DentalViewRouter';
 import { cbctDentalHP } from './hanging-protocols/cbctDentalHP';
 import DentalArchSplineTool from './tools/DentalArchSplineTool';
+import React from 'react';
+import ReactDOM from 'react-dom/client';
+import DentalFileManager from './viewports/DentalFileManager';
 
 export { DentalArchSplineTool, ARCH_SPLINE_COMPLETED } from './tools/DentalArchSplineTool';
 export { buildCenterline, buildCenterlinePoints } from './utils/buildCenterline';
@@ -19,14 +22,50 @@ const extension = {
   id,
   version: '0.1.0',
 
-  preRegistration({
-    servicesManager,
-    extensionManager,
-    configuration = {},
-  }: any) {
-    console.log(
-      `[DentalCPR] Extension v0.1.0 registered — world's first open-source OHIF dental panoramic CPR`
-    );
+  preRegistration({ servicesManager, extensionManager, configuration = {} }: any) {
+    console.log('[DentalCPR] Extension v0.1.0 registered — world\'s first open-source OHIF dental panoramic CPR');
+
+    // ── Inject DentalFileManager as a fullscreen portal ────────────────────
+    // OHIF viewport components only render when a study is loaded.
+    // We inject the file manager at the DOM level so it shows before any study
+    // is selected, independent of OHIF's study/display-set lifecycle.
+
+    const studyUIDs = new URLSearchParams(window.location.search).getAll('StudyInstanceUIDs');
+    const hasStudy = studyUIDs.length > 0;
+
+    // CSS animation for spinner components
+    if (!document.getElementById('dental-animations')) {
+      const s = document.createElement('style');
+      s.id = 'dental-animations';
+      s.textContent = '@keyframes spin { to { transform: rotate(360deg); } }';
+      document.head.appendChild(s);
+    }
+
+    const portalRoot = document.createElement('div');
+    portalRoot.id = 'dental-file-manager-portal';
+    portalRoot.style.cssText = `position:fixed;inset:0;z-index:9999;display:${hasStudy ? 'none' : 'block'}`;
+    document.body.appendChild(portalRoot);
+
+    const reactRoot = ReactDOM.createRoot(portalRoot);
+    const render = (visible: boolean) => {
+      portalRoot.style.display = visible ? 'block' : 'none';
+      if (visible) {
+        reactRoot.render(
+          React.createElement(DentalFileManager, {
+            onOpen: (studyInstanceUID: string) => {
+              portalRoot.style.display = 'none';
+              // Navigate to OHIF viewer with the study UID
+              window.location.href = `/?StudyInstanceUIDs=${encodeURIComponent(studyInstanceUID)}`;
+            },
+          })
+        );
+      }
+    };
+
+    render(!hasStudy);
+    // Note: navigation uses window.location.href (full reload), not pushState.
+    // popstate does not fire for hard navigations, so no listener needed.
+    // "Schließen" → window.location.href='/' → full reload → preRegistration re-runs → file manager shown.
   },
 
   /**

@@ -1,6 +1,6 @@
 window.config = {
   routerBasename: '/',
-  showStudyList: true,
+  showStudyList: false,
   extensions: [],
   modes: [],
   showLoadingIndicator: true,
