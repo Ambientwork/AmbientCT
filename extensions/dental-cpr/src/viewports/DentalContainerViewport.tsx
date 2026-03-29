@@ -150,6 +150,8 @@ export default function DentalContainerViewport(props: any) {
     style.textContent = `
       .group\\/pane:nth-child(1) { width: 33% !important; }
       .group\\/pane:nth-child(2) { left: calc(33% + 4px) !important; width: calc(67% - 6px) !important; }
+      [class*="group-hover/pane"] { pointer-events: none !important; }
+      [class*="group-hover/pane"] > * { pointer-events: auto; }
     `;
     document.head.appendChild(style);
     return () => {
