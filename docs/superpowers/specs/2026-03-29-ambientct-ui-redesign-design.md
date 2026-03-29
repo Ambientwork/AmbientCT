@@ -14,7 +14,7 @@ Replace the current OHIF default UI with a clean, modern two-screen application:
 1. **File Manager** — start screen, shown when no study is open
 2. **Viewer** — dental CPR workspace, opened from the file manager
 
-Both screens share the same shell (menubar + sidebar). Navigation: "Öffnen →" in the file manager loads a study into the viewer; "Schließen" in the viewer returns to the file manager.
+Both screens share the same shell (menubar + sidebar). Navigation: "Öffnen →" in the file manager loads a study into the Viewer; "Schließen" in the Viewer returns to the File Manager (does NOT delete from Orthanc).
 
 ---
 
@@ -28,11 +28,14 @@ Both screens share the same shell (menubar + sidebar). Navigation: "Öffnen →"
 | Sidebar bg | `#0d0d11` |
 | Viewer bg | `#070709` |
 | Online dot | `#22c55e` |
+| Offline dot | `#ef4444` |
 | CT badge | `#60a5fa` |
 | DX badge | `#4ade80` |
 | Border | `1px solid #1e1e25` |
 | Radius | `6–10px` |
 | Font | `Inter, -apple-system, sans-serif` |
+
+All color constants are exported from `src/utils/designTokens.ts`. All new components use **inline styles only** — no CSS files, no Tailwind.
 
 ---
 
@@ -52,102 +55,149 @@ Both screens share the same shell (menubar + sidebar). Navigation: "Öffnen →"
 ```
 
 ### Menubar
-- Left: `🦷 Ambient CT` logo + `Datei ▾` dropdown (Importieren, Exportieren, Schließen) + `Ansicht` + `Werkzeuge`
-- Right: `● Orthanc 26.1 · N Studien` status badge
+- Left: `🦷 Ambient CT` logo + `Datei ▾` dropdown (Importieren, Exportieren†, —, Schließen) + `Ansicht` + `Werkzeuge`
+- Right: `● Orthanc N Studien` status badge (green dot = reachable, red dot = unreachable)
+- †Exportieren: out of scope for this iteration (rendered disabled)
 
-### Sidebar (file tree)
+### Sidebar
 - Search field (`🔍 Suchen…`)
-- Section **PATIENTEN**: expandable patient rows → study rows → series rows
-- Bottom: `+ DICOM Importieren` button
-- In viewer mode: active study highlighted; section label changes to **GEÖFFNET** + **ALLE STUDIEN**
+- **File Manager mode** — section label **PATIENTEN**: expandable patient → study → series rows
+- **Viewer mode** — section label **GEÖFFNET**: active study highlighted; section **ALLE STUDIEN** below with other patients
+- Bottom: `+ DICOM Importieren` button (always visible)
 
 ### Status Bar
 - File Manager: `N Patienten · N Studien · Letzter Import: …` (left) + `AmbientCT v0.x · MIT` (right)
-- Viewer: `Patient · Modality · Datum · N Schichten · Voxelgröße` (left) + `75.3 / 142 mm` arc position (right)
+- Viewer: `Patient · Modality · Datum · N Schichten · Voxelgröße` (left) + `75.3 / 142 mm` arc position (right); arc position shows `— / — mm` when no arch drawn yet
+
+### ⚙ Orthanc button
+Opens `http://localhost:8042` in a new browser tab (direct link to Orthanc admin UI). No modal.
 
 ---
 
-## 4. Screen A — File Manager
+## 4. OHIF Integration — How `DentalFileManager` is surfaced
 
-Shown on load, when no study is active.
+The existing integration point is `DentalViewRouter` (`src/viewports/DentalViewRouter.tsx`). This is the single registered OHIF viewport component for all panes. It already dispatches on `viewportId`.
+
+**Changes to `DentalViewRouter`:**
+
+1. Add local `appState: 'filemanager' | 'viewer'` state (React `useState`).
+2. Add a `studyInstanceUID: string | null` state.
+3. When `viewportId === 'dentalContainer'` **and** `appState === 'filemanager'`: render `DentalFileManager` instead of `DentalContainerViewport`.
+4. `DentalFileManager` receives an `onOpen(studyInstanceUID: string)` callback → sets `appState = 'viewer'` and `studyInstanceUID`.
+5. `DentalContainerViewport` receives an `onClose()` callback → sets `appState = 'filemanager'`.
+
+**Viewer toolbar location:** The breadcrumb + tool buttons + Schließen toolbar is rendered **inside `DentalContainerViewport`** as its topmost child (a `<div>` above the existing flex column of CPR + cross-sections). This is the right location because `DentalContainerViewport` already owns the 67% right pane and its internal layout. `DentalViewRouter` does not need to render anything above the OHIF viewport grid.
+
+**File Manager when no study is loaded:** When `showStudyList: false` and `appState === 'filemanager'`, OHIF renders the default two-pane grid. The axial pane (`cbctAxial`) shows the dark placeholder (existing `dentalEmpty` path in `DentalViewRouter`, line 48–50). The `dentalContainer` pane renders `DentalFileManager`, which fills the 67% right area. This is intentional — the user sees a dark left pane and the file manager on the right, which is acceptable for the initial release.
+
+**OHIF config changes:**
+
+- Set `showStudyList: false` in `ohif-config.js` — suppresses OHIF's built-in study list.
+- No hanging-protocol changes needed; the router handles the screen switch internally.
+
+**State location:** `DentalViewRouter` owns `appState`. This avoids a global context and keeps the state co-located with the dispatch logic.
+
+---
+
+## 5. Screen A — File Manager
+
+Shown initially (when `appState === 'filemanager'`).
 
 ### Main Area
-- **Breadcrumb-Title:** `Studien` + subtitle `Orthanc PACS · localhost:8042`
+- **Title:** `Studien` · subtitle `Orthanc PACS · localhost:8042`
 - **Tab bar:** Alle Studien | Zuletzt geöffnet | Importiert
-- **Search bar** (full width) + `↑ Importieren` button + `⚙ Orthanc` button
+  - "Alle Studien" — fetched from Orthanc via `OrthancClient`
+  - "Zuletzt geöffnet" — persisted in `localStorage` (key: `ambientct.recentStudies`, max 20 entries, format: `StudySummary[]`)
+  - "Importiert" — same localStorage with `importedAt` timestamp filter (last 7 days)
+- **Search bar** (full width, filters table client-side) + `↑ Importieren` button + `⚙ Orthanc` button
 - **Study table** columns: Patient · Datum · Modalität (badge) · Serien · Beschreibung · [Öffnen →]
-- Clicking `Öffnen →` navigates to Viewer screen
+  - `Öffnen →` calls `onOpen(studyInstanceUID)` and stores entry in `recentStudies`
 
-### Data Source
-- Orthanc REST API: `GET /dicom-web/studies` (DICOMweb) or `GET /studies` (native)
-- Map response: PatientName, StudyDate, Modality, NumberOfStudyRelatedSeries, StudyDescription
-- Polling interval: 30s or on focus
+### Empty States
+- **Loading:** Spinner centered in table area
+- **Zero studies:** "Keine Studien vorhanden. DICOM-Dateien importieren, um zu beginnen." + `↑ Importieren` button
+- **Orthanc unreachable:** "Orthanc nicht erreichbar (localhost:8042). Bitte stellen Sie sicher, dass Orthanc läuft." + Retry button
 
 ### DICOM Import
-- `↑ Importieren` opens file picker (`.dcm`, `.zip`) → POST to `/instances`
+- `↑ Importieren` opens file picker (`.dcm`, `.zip`, multi-select)
 - Drag-and-drop onto main area also triggers import
-- Progress indicator inline in table row
+- Files POST to `/pacs/dicom-web` (Orthanc DICOMweb STOW-RS: `POST /pacs/dicom-web/studies`)
+- Progress indicator: inline spinner in the import button + toast notification on completion
+- On error: toast "Import fehlgeschlagen: [error message]" with retry option
 
 ---
 
-## 5. Screen B — Viewer
+## 6. Screen B — Viewer
 
-Opened after clicking `Öffnen →`. Layout identical to current dental CPR viewer, with redesigned chrome.
+Shown when `appState === 'viewer'`.
 
-### Toolbar (inline, top of main area)
-- Breadcrumb: `Studien / Yoo 2023 · CBCT` (clicking "Studien" = Schließen)
+### Toolbar (top of main area, replaces OHIF top chrome)
+- Breadcrumb: `Studien / [PatientName] · [Modality]` — clicking "Studien" = Schließen
 - Tool buttons: `⌒ Bogen` | `📐 Messen` | `Slab ⟵●⟶ 10mm`
-- Right: `✕ Schließen` → back to File Manager (does NOT delete from Orthanc)
+- Right: `✕ Schließen` → calls `onClose()`, returns to File Manager
 
-### Viewport grid
-- Left 33%: Axial CBCT + arch spline overlay (existing)
-- Right 67%: top 60% = Panorama CPR, bottom 40% = 3× cross-section (Prev / Center / Next)
+### Viewport grid (existing layout, preserved as-is)
+- Left 33%: Axial CBCT (`cbctAxial`) — Cornerstone3D standard viewport
+- Right 67%: `dentalContainer` — `DentalContainerViewport`
+  - Top 60%: Panorama CPR
+  - Bottom 40%: 3× cross-section (Prev / Center / Next)
+- The 33/67 split is enforced by the existing `dental-grid-col-override` `<style>` injection in `DentalContainerViewport` (lines 143–146) — **no change needed**.
 - Labels: `AXIAL · CBCT` | `PANORAMA CPR` | `↙ PREV −8` | `↕ CENTER` | `↗ NEXT +8`
 
-### Existing functionality preserved
+### Existing functionality preserved (no changes)
 - DentalArchSplineTool (click to place, Enter/double-click to complete)
 - Catmull-Rom smooth spline display
 - Axial overlay rectangles (Prev/Center/Next, parallel, arc-length accurate)
-- Arc-fraction navigation + mm position label
+- Arc-fraction navigation + `mm / total mm` position label
 
 ---
 
-## 6. Component Architecture
+## 7. Component Architecture
 
 ### New components
 
 | Component | File | Responsibility |
 |-----------|------|----------------|
-| `AppShell` | `src/components/AppShell.tsx` | Menubar + sidebar + status bar wrapper |
-| `DentalFileManager` | `src/viewports/DentalFileManager.tsx` | Orthanc study browser (Screen A) |
+| `DentalFileManager` | `src/viewports/DentalFileManager.tsx` | Screen A — Orthanc study browser |
 | `OrthancClient` | `src/utils/orthancClient.ts` | Typed Orthanc REST API wrapper |
 | `StudyTable` | `src/components/StudyTable.tsx` | Study list with sorting + open button |
 | `PatientTree` | `src/components/PatientTree.tsx` | Sidebar patient/study/series tree |
 | `DicomImport` | `src/components/DicomImport.tsx` | File picker + drag-drop + progress |
+| `designTokens` | `src/utils/designTokens.ts` | Color/spacing constants |
 
 ### Modified components
 
 | Component | Change |
 |-----------|--------|
-| `DentalContainerViewport.tsx` | Adopt AppShell toolbar, add Schließen callback |
-| `DentalCPRViewport.tsx` | Toolbar button styles, breadcrumb integration |
-| `DentalCrossSectionViewport.tsx` | Label style update |
+| `DentalViewRouter.tsx` | Add `appState` + `studyInstanceUID` state; render `DentalFileManager` or `DentalContainerViewport` based on state |
+| `DentalContainerViewport.tsx` | Accept and wire `onClose()` prop; apply updated toolbar/label styles |
+| `DentalCPRViewport.tsx` | Apply updated button/label styles from `designTokens` |
+| `DentalCrossSectionViewport.tsx` | Apply updated label styles |
+
+### Untouched components
+
+| Component | Reason |
+|-----------|--------|
+| `DentalMPRViewport.tsx` | Not part of dental CPR layout; no changes |
+| `DentalArchSplineTool.ts` | Functionality preserved as-is |
+| `dentalState.ts` | No changes |
 
 ### OHIF config changes
 
 | File | Change |
 |------|--------|
-| `config/ohif-config.js` | Register `DentalFileManager` as default viewport when no study active; set custom layout |
-| `extensions/dental-cpr/src/index.tsx` | Export new components, register `AppShell` |
+| `config/ohif-config.js` | Set `showStudyList: false` |
 
 ---
 
-## 7. OrthancClient API
+## 8. OrthancClient API
+
+Base URL: `/pacs/dicom-web` (via Nginx proxy — works both in Docker and local dev via the same proxy).
 
 ```typescript
-// GET /studies → StudySummary[]
+// GET /pacs/dicom-web/studies → StudySummary[]
 interface StudySummary {
-  id: string;               // Orthanc study UID
+  studyInstanceUID: string; // DICOM StudyInstanceUID (e.g. 1.2.840.…)
   patientName: string;
   studyDate: string;        // YYYYMMDD
   modality: string;         // CT | DX | IO | …
@@ -155,54 +205,74 @@ interface StudySummary {
   description: string;
 }
 
-// POST /instances  (multipart/form-data, file=<dcm>)
-// Returns: { ID, Status }
+// Extended form stored in localStorage (recent / imported tabs):
+interface StoredStudySummary extends StudySummary {
+  lastOpenedAt?: string;    // ISO timestamp — for "Zuletzt geöffnet"
+  importedAt?: string;      // ISO timestamp — for "Importiert" (last 7 days filter)
+}
+
+// POST /pacs/dicom-web/studies  (Content-Type: multipart/related; type=application/dicom)
+// Returns: { ReferencedSOPSequence: [...] }
+
+// Health check: GET /pacs/dicom-web/studies?limit=1
+// Treat any HTTP response (even empty 200) as "online"; treat network error as "offline".
+// This is more reliable than GET /pacs/ which may not be proxied.
 ```
+
+DICOMweb STOW-RS is used for import (standard, works with Orthanc's DICOMweb plugin).
+`onOpen(studyInstanceUID)` receives the DICOM `StudyInstanceUID` (not the Orthanc-internal hash).
 
 ---
 
-## 8. Navigation Flow
+## 9. Navigation Flow
 
 ```
 App start
-  └→ DentalFileManager (Screen A)
-       ├→ [Öffnen →] clicked
-       │    └→ DentalContainerViewport (Screen B)
-       │         └→ [Schließen] clicked
-       │              └→ DentalFileManager (Screen A)
-       └→ [+ DICOM Importieren] / drag-drop
-            └→ POST /instances → refresh study list
+  └→ DentalViewRouter (appState = 'filemanager')
+       └→ renders DentalFileManager
+            ├→ [Öffnen →] clicked
+            │    └→ appState = 'viewer', studyInstanceUID = <uid>
+            │         └→ renders DentalContainerViewport
+            │              └→ [Schließen] / breadcrumb "Studien"
+            │                   └→ appState = 'filemanager'
+            └→ [+ DICOM Importieren] / drag-drop
+                 └→ POST /pacs/dicom-web/studies → refresh study list
 ```
 
-State: `appState = 'filemanager' | 'viewer'` managed in a top-level React context or OHIF layout component. No router needed.
+---
+
+## 10. Error Handling Summary
+
+| Scenario | Display |
+|----------|---------|
+| Orthanc unreachable on load | Red status dot + inline error message + Retry button in study table area |
+| Orthanc unreachable during browse | Status dot turns red; last-loaded list remains visible with stale indicator |
+| Empty study list | "Keine Studien" empty state with import CTA |
+| Import file error | Toast: "Import fehlgeschlagen: [message]" with retry |
+| Import network error | Toast: "Netzwerkfehler beim Import" with retry |
+| Volume load fails in viewer | `DentalCPRViewport` existing error state handles it (red overlay + message); `appState` stays `'viewer'`; user can click Schließen to return |
 
 ---
 
-## 9. Styling Strategy
-
-- All new components use **inline styles** (consistent with existing dental viewport components)
-- Color constants exported from `src/utils/designTokens.ts`
-- No new CSS framework; no Tailwind (not available in OHIF extension context)
-- Existing OHIF grid override CSS (`dental-grid-col-override`) retained
-
----
-
-## 10. Out of Scope
+## 11. Out of Scope
 
 - Authentication / user login
 - Multi-user / role management
-- DICOM Send (DIMSE C-STORE)
+- DICOM Send (DIMSE C-STORE) and Export
 - Reporting / annotation export
 - Series-level viewer (non-dental modalities)
+- Delete study from Orthanc (UI action "Schließen" only returns to file manager)
 
 ---
 
-## 11. Success Criteria
+## 12. Success Criteria
 
-1. File manager loads and lists studies from Orthanc on `localhost:8042`
-2. Clicking `Öffnen →` transitions to the dental CPR viewer with the correct study
-3. Clicking `Schließen` returns to the file manager without data loss
-4. DICOM import (file picker + drag-drop) uploads to Orthanc and refreshes the list
-5. Sidebar patient tree expands/collapses correctly
-6. All existing CPR/cross-section/arch-spline functionality continues to work
-7. No OHIF default chrome visible (no top-bar, no bottom toolbar from OHIF)
+1. File manager loads and lists studies from Orthanc via `/pacs/dicom-web/studies`
+2. Clicking `Öffnen →` transitions to the dental CPR viewer with the correct study loaded
+3. Clicking `Schließen` (or breadcrumb "Studien") returns to the file manager; study remains in Orthanc
+4. DICOM import (file picker + drag-drop) posts to `/pacs/dicom-web/studies` and refreshes the list
+5. Sidebar patient tree expands/collapses correctly; active study is highlighted in viewer mode
+6. All existing CPR/cross-section/arch-spline functionality continues to work unchanged
+7. The following OHIF default chrome elements are absent: OHIF top study-list bar, OHIF bottom measurement toolbar, OHIF left panel, OHIF mode selector
+8. Orthanc unreachable state shows red status dot + error message (not a blank screen or crash)
+9. "Zuletzt geöffnet" tab shows studies from `localStorage` correctly after re-open
