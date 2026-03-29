@@ -6,6 +6,7 @@ import React, {
 } from 'react';
 import { cache, volumeLoader } from '@cornerstonejs/core';
 import type { Types } from '@cornerstonejs/core';
+import { Colors, Font } from '../utils/designTokens';
 import vtkImageCPRMapper from '@kitware/vtk.js/Rendering/Core/ImageCPRMapper';
 import vtkDataArray from '@kitware/vtk.js/Common/Core/DataArray';
 import vtkImageSlice from '@kitware/vtk.js/Rendering/Core/ImageSlice';
@@ -553,7 +554,7 @@ export default function DentalCPRViewport({
 
   // ── Status colour helper ─────────────────────────────────────────────────
   const statusColour: Record<RenderStatus, string> = {
-    waiting: '#888',
+    waiting: Colors.textMuted,
     rendering: '#ffcc00',
     ready: '#00ff88',
     error: '#ff6b6b',
@@ -568,7 +569,7 @@ export default function DentalCPRViewport({
         flexDirection: 'column',
         background: '#0a0a0a',
         color: '#eee',
-        fontFamily: 'system-ui, -apple-system, sans-serif',
+        fontFamily: Font.family,
         overflow: 'hidden',
       }}
     >
@@ -585,7 +586,7 @@ export default function DentalCPRViewport({
           fontSize: 12,
         }}
       >
-        <span style={{ color: '#00aaff', fontWeight: 700, letterSpacing: '0.02em' }}>
+        <span style={{ color: Colors.primary, fontWeight: 700, letterSpacing: '0.02em' }}>
           🦷 Panoramic CPR
         </span>
 
@@ -603,7 +604,7 @@ export default function DentalCPRViewport({
         </span>
 
         {/* Slab thickness */}
-        <label style={{ display: 'flex', alignItems: 'center', gap: 5, flexShrink: 0, color: '#888', fontSize: 11 }}>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 5, flexShrink: 0, color: Colors.textMuted, fontSize: 11 }}>
           Slab
           <input
             type="range"
@@ -611,9 +612,9 @@ export default function DentalCPRViewport({
             max={40}
             value={slabMm}
             onChange={e => setSlabMm(Number(e.target.value))}
-            style={{ width: 64, accentColor: '#00aaff' }}
+            style={{ width: 64, accentColor: Colors.primary }}
           />
-          <span style={{ color: '#ccc', minWidth: 30, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
+          <span style={{ color: Colors.text, minWidth: 30, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
             {slabMm}mm
           </span>
         </label>
@@ -630,7 +631,7 @@ export default function DentalCPRViewport({
           alignItems: 'center',
           gap: 8,
           fontSize: 11,
-          color: '#666',
+          color: Colors.textDim,
         }}>
           <span>◀</span>
           <input
@@ -640,7 +641,7 @@ export default function DentalCPRViewport({
             step={0.5}
             value={(cursorArcFrac ?? 0.5) * 100}
             onChange={e => navigateArch(Number(e.target.value))}
-            style={{ flex: 1, accentColor: '#00aaff', cursor: 'pointer' }}
+            style={{ flex: 1, accentColor: Colors.primary, cursor: 'pointer' }}
           />
           <span>▶</span>
           <span style={{ color: '#555', minWidth: 44, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
@@ -729,14 +730,14 @@ export default function DentalCPRViewport({
           const nextIdx = Math.min(numSamples - 1, centerIdx + CROSS_SECTION_STEP);
           const prevPct = (fracs.length === numSamples ? fracs[prevIdx] : prevIdx / (numSamples - 1)) * 100;
           const nextPct = (fracs.length === numSamples ? fracs[nextIdx] : nextIdx / (numSamples - 1)) * 100;
-          const dashedBg = 'repeating-linear-gradient(to bottom, #00aaff 0px, #00aaff 5px, transparent 5px, transparent 10px)';
+          const dashedBg = `repeating-linear-gradient(to bottom, ${Colors.primary} 0px, ${Colors.primary} 5px, transparent 5px, transparent 10px)`;
           return (
             <>
               <div style={{ position: 'absolute', left: `${prevPct}%`, top: 0, bottom: 0, width: 1,
                 background: dashedBg, opacity: 0.7, pointerEvents: 'none', zIndex: 10 }} />
               <div style={{ position: 'absolute', left: `${cursorPct}%`, top: 0, bottom: 0, width: 2,
-                background: '#00aaff', opacity: 0.9, pointerEvents: 'none', zIndex: 11,
-                boxShadow: '0 0 5px #00aaff99' }} />
+                background: Colors.primary, opacity: 0.9, pointerEvents: 'none', zIndex: 11,
+                boxShadow: `0 0 5px ${Colors.primary}99` }} />
               <div style={{ position: 'absolute', left: `${nextPct}%`, top: 0, bottom: 0, width: 1,
                 background: dashedBg, opacity: 0.7, pointerEvents: 'none', zIndex: 10 }} />
             </>

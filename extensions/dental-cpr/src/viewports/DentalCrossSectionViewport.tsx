@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { cache } from '@cornerstonejs/core';
 import type { CenterlinePoint } from '../utils/buildCenterline';
 import { getSharedFrames, getSharedArcFractions, getSharedTotalArcMm } from '../utils/dentalState';
+import { Colors, Font } from '../utils/designTokens';
 
 export const ARCH_CROSS_SECTION_POSITION = 'DENTAL_ARCH_CROSS_SECTION_POSITION';
 /** Fired by cross-section viewport on wheel scroll — tells CPR viewport to step */
@@ -229,7 +230,7 @@ export default function DentalCrossSectionViewport({
     window.dispatchEvent(new CustomEvent(ARCH_NAVIGATE_DELTA, { detail: { delta: step } }));
   }, []);
 
-  const statusColour = status === 'ready' ? '#00ff88' : status === 'error' ? '#ff6b6b' : '#555';
+  const statusColour = status === 'ready' ? '#00ff88' : status === 'error' ? '#ff6b6b' : Colors.textDim;
 
   return (
     <div
@@ -240,7 +241,7 @@ export default function DentalCrossSectionViewport({
         flexDirection: 'column',
         background: '#0a0a0a',
         color: '#eee',
-        fontFamily: 'system-ui, -apple-system, sans-serif',
+        fontFamily: Font.family,
         overflow: 'hidden',
       }}
     >
@@ -257,7 +258,7 @@ export default function DentalCrossSectionViewport({
           fontSize: 12,
         }}
       >
-        <span style={{ color: '#00aaff', fontWeight: 700, letterSpacing: '0.02em' }}>
+        <span style={{ color: Colors.primary, fontWeight: 700, letterSpacing: '0.02em' }}>
           {position === -1 ? '⊥ Prev' : position === 1 ? '⊥ Next' : '⊥ Center'}
         </span>
         <span style={{ color: statusColour, flex: 1, fontSize: 11 }}>
