@@ -54,8 +54,8 @@ const extension = {
           React.createElement(DentalFileManager, {
             onOpen: (studyInstanceUID: string) => {
               portalRoot.style.display = 'none';
-              // Navigate to OHIF viewer with the study UID
-              window.location.href = `/?StudyInstanceUIDs=${encodeURIComponent(studyInstanceUID)}`;
+              // Navigate to OHIF viewer with the study UID (route: /dentalCPR)
+              window.location.href = `/dentalCPR?StudyInstanceUIDs=${encodeURIComponent(studyInstanceUID)}`;
             },
           })
         );
@@ -65,7 +65,8 @@ const extension = {
     render(!hasStudy);
     // Note: navigation uses window.location.href (full reload), not pushState.
     // popstate does not fire for hard navigations, so no listener needed.
-    // "Schließen" → window.location.href='/' → full reload → preRegistration re-runs → file manager shown.
+    // "Schließen" → window.location.href='/' → full reload → preRegistration re-runs → portal shows.
+    // "Öffnen →" → window.location.href='/dentalCPR?StudyInstanceUIDs=...' → OHIF route matched.
   },
 
   /**
