@@ -7,6 +7,7 @@ import DentalCrossSectionViewport, {
 } from './DentalCrossSectionViewport';
 import type { CrossSectionEventDetail } from './DentalCrossSectionViewport';
 import { getSharedFrames } from '../utils/dentalState';
+import ViewerToolbar from '../components/ViewerToolbar';
 
 const AXIAL_OVERLAY_ID = 'dental-axial-xsect-overlay';
 // Half-width of the cross-section field (SLICE_SIZE_MM / 2 = 80 / 2)
@@ -28,6 +29,12 @@ const DENTAL_GRID_STYLE_ID = 'dental-grid-col-override';
 export default function DentalContainerViewport(props: any) {
   const { displaySets, servicesManager, extensionManager, commandsManager } = props;
   const sharedProps = { displaySets, servicesManager, extensionManager, commandsManager };
+
+  const onClose = props.onClose ?? (() => { window.location.href = '/'; });
+  const ds = displaySets?.[0] ?? {};
+  const patientName: string = ds.PatientName ?? ds.patientName ?? 'Unbekannt';
+  const modality: string    = ds.Modality    ?? ds.modality    ?? 'CT';
+  const studyDate: string   = ds.StudyDate   ?? ds.studyDate   ?? '';
 
   // ── Axial cross-section overlay ─────────────────────────────────────────────
   useEffect(() => {
@@ -160,6 +167,12 @@ export default function DentalContainerViewport(props: any) {
       overflow: 'hidden',
       gap: 2,
     }}>
+      <ViewerToolbar
+        patientName={patientName}
+        modality={modality}
+        studyDate={studyDate}
+        onClose={onClose}
+      />
       <div style={{ flex: '6', minHeight: 0, overflow: 'hidden' }}>
         <DentalCPRViewport viewportId="dentalCPR" {...sharedProps} />
       </div>
