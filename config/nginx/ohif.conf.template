@@ -1,18 +1,20 @@
-# HTTP → HTTPS redirect
+# HTTP only — no HTTPS redirect.
+# SharedArrayBuffer (Cornerstone3D) requires COOP/COEP headers, but Chrome
+# treats localhost as a secure context so HTTP + these headers is sufficient.
+# HTTPS remains available on port 443 for non-localhost access if needed.
 server {
-  listen 80;
-  return 301 https://$host:3443$request_uri;
+  listen 443 ssl;
+  ssl_certificate     /etc/nginx/ssl/cert.pem;
+  ssl_certificate_key /etc/nginx/ssl/key.pem;
+  return 301 http://$host:3000$request_uri;
 }
 
 server {
-  listen 443 ssl;
+  listen 80;
   root /usr/share/nginx/html;
 
-  ssl_certificate     /etc/nginx/ssl/cert.pem;
-  ssl_certificate_key /etc/nginx/ssl/key.pem;
-
   # Required for SharedArrayBuffer (Cornerstone3D volume rendering).
-  # Chrome requires HTTPS + these headers for SharedArrayBuffer to be available.
+  # localhost is a secure context in Chrome — HTTP is sufficient here.
   add_header Cross-Origin-Opener-Policy "same-origin" always;
   add_header Cross-Origin-Embedder-Policy "credentialless" always;
 
