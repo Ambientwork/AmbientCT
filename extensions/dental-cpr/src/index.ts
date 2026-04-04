@@ -30,6 +30,10 @@ const extension = {
     // We inject the file manager at the DOM level so it shows before any study
     // is selected, independent of OHIF's study/display-set lifecycle.
 
+    // Pre-dismiss the OHIF "investigational use only" disclaimer banner.
+    // Key is sessionStorage so it resets on tab close (OHIF's own logic).
+    sessionStorage.setItem('investigationalUseDialog', 'hidden');
+
     const studyUIDs = new URLSearchParams(window.location.search).getAll('StudyInstanceUIDs');
     const hasStudy = studyUIDs.length > 0;
 

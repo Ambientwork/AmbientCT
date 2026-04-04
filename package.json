@@ -10,6 +10,7 @@
     "node": ">=20.0.0"
   },
   "devDependencies": {
+    "@babel/preset-react": "^7.28.5",
     "@babel/preset-typescript": "^7.28.5"
   }
 }

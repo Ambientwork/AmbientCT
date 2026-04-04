@@ -46,8 +46,23 @@ server {
     add_header Cross-Origin-Embedder-Policy "credentialless" always;
   }
 
-  # SPA routing — all paths serve index.html
+  # Never cache index.html — it references extension bundles by name (no content hash).
+  # Without this, Chrome caches the old HTML in normal mode; incognito always gets fresh.
+  location = /index.html {
+    add_header Cache-Control "no-cache, no-store, must-revalidate" always;
+    add_header Cross-Origin-Opener-Policy "same-origin" always;
+    add_header Cross-Origin-Embedder-Policy "credentialless" always;
+  }
+
+  # SPA routing — all paths serve index.html.
+  # Must include no-cache headers: when Chrome requests /dentalCPR?..., nginx
+  # serves index.html via try_files but this block has NO regex override,
+  # so without Cache-Control here Chrome heuristic-caches the SPA routes.
+  # (Static assets like .js/.css ARE caught by regex blocks below → immutable cache.)
   location / {
+    add_header Cache-Control "no-cache, no-store, must-revalidate" always;
+    add_header Cross-Origin-Opener-Policy "same-origin" always;
+    add_header Cross-Origin-Embedder-Policy "credentialless" always;
     try_files $uri $uri/ /index.html;
   }
 

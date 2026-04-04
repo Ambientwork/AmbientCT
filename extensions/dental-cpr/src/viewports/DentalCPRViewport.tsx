@@ -73,39 +73,89 @@ export default function DentalCPRViewport({
   const splineFramesRef   = useRef<CenterlinePoint[]>([]);
   // Arc-length fractions[i] = cumulative arc from 0→i / total arc (0..1)
   const arcFractionsRef   = useRef<Float32Array>(new Float32Array(0));
+  // Total arch arc-length in mm — stored so the ResizeObserver can recompute image bounds
+  const arcLengthMmRef    = useRef<number>(0);
 
   // Cross-section cursor position as arc-fraction (0-1) — state for rendering, ref for event handlers
   const [cursorArcFrac, setCursorArcFrac] = useState<number | null>(null);
   const cursorArcFracRef = useRef<number>(0.5);
 
+  // Sample index of the active cross-section — used for cursor rendering (not arc-fraction)
+  const [cursorSampleIdx, setCursorSampleIdx] = useState<number | null>(null);
+  const cursorSampleIdxRef = useRef<number>(150);
+
+  // Image bounds within the div [0–100 %] — updated after each CPR render and resize.
+  // Accounts for the fact that the vtk.js camera may leave horizontal margins when
+  // fitting the depth (scan height) rather than the arch length.
+  const cprImageBoundsRef = useRef<{ leftPct: number; rightPct: number }>({ leftPct: 0, rightPct: 100 });
+  // State copy of image bounds — drives slider positioning (ref alone won't re-render)
+  const [cprImgBounds, setCprImgBounds] = useState<{ leftPct: number; rightPct: number }>({ leftPct: 0, rightPct: 100 });
+
   // Navigate cross-section via slider, click, drag, or wheel.
-  // `pct` is a panel-% (0-100).  We map it to the closest arch sample by arc-length.
+  // `pct` is a div-% (0-100).  Maps through image bounds → sample index.
   const navigateArch = useCallback((pct: number) => {
     const frames = splineFramesRef.current;
     const fracs  = arcFractionsRef.current;
     if (!frames.length) return;
 
-    const frac = Math.max(0, Math.min(1, pct / 100));
-    cursorArcFracRef.current = frac;
+    const { leftPct, rightPct } = cprImageBoundsRef.current;
+    const imgWidthPct = rightPct - leftPct;
 
-    // Binary-search fracs[] to find the index whose arc-fraction is closest to frac
-    let idx = 0;
-    if (fracs.length === frames.length && fracs.length > 1) {
-      let lo = 0, hi = fracs.length - 1;
+    // Map div-% to image-column fraction (arc-length space, not index space).
+    // vtk.js CPR mapper places columns by cumulative arc-length, so we must
+    // binary-search arcFracs to convert column fraction → sample index.
+    const colFrac = imgWidthPct > 1
+      ? Math.max(0, Math.min(1, (pct - leftPct) / imgWidthPct))
+      : Math.max(0, Math.min(1, pct / 100));
+
+    let idx: number;
+    if (fracs.length >= frames.length) {
+      let lo = 0, hi = frames.length - 1;
       while (lo < hi) {
         const mid = (lo + hi) >> 1;
-        if (fracs[mid] < frac) lo = mid + 1;
+        if (fracs[mid] < colFrac) lo = mid + 1;
         else hi = mid;
       }
       idx = lo;
     } else {
-      idx = Math.round(frac * (frames.length - 1));
+      idx = Math.round(colFrac * (frames.length - 1));
     }
+    idx = Math.max(0, Math.min(frames.length - 1, idx));
+    cursorSampleIdxRef.current = idx;
+    setCursorSampleIdx(idx);
 
-    setCursorArcFrac(fracs.length ? fracs[idx] : frac);
+    const frac = fracs.length > idx ? fracs[idx] : colFrac;
+    cursorArcFracRef.current = frac;
+    setCursorArcFrac(frac);
+
     window.dispatchEvent(new CustomEvent(ARCH_CROSS_SECTION_POSITION, {
       detail: { frame: frames[idx], splineIndex: idx, numSamples: frames.length },
     }));
+  }, []);
+
+  // Compute image bounds (leftPct / rightPct of div) analytically from camera state.
+  // The CPR mapper in straightened mode outputs an image spanning exactly arcLengthMm
+  // in world-Y, centered at the camera focal point.  No actor.getBounds() needed —
+  // that vtk.js call is unreliable for the CPR mapper output image.
+  const computeImageBounds = useCallback((arcLenMm: number) => {
+    const renderer  = rendererRef.current;
+    const container = vtkContainerRef.current;
+    if (!renderer || !container || arcLenMm <= 0) return;
+    const camera = renderer.getActiveCamera();
+    const vpW = container.clientWidth  || 1;
+    const vpH = container.clientHeight || 1;
+    const A   = vpW / vpH;
+    const ps  = camera.getParallelScale();
+    // visibleYWidth = 2 * ps * A  (total world-Y units visible across the div)
+    // imageFraction = arcLenMm / visibleYWidth  (what fraction of the div the image fills)
+    const visibleYWidth = 2 * ps * A;
+    const margin = (visibleYWidth - arcLenMm) / 2;
+    const leftPct  = Math.max(0, (margin / visibleYWidth) * 100);
+    const rightPct = Math.min(100, 100 - leftPct);
+    if (rightPct > leftPct) {
+      cprImageBoundsRef.current = { leftPct, rightPct };
+      setCprImgBounds({ leftPct, rightPct });
+    }
   }, []);
 
   // ── VTK pipeline initialisation ──────────────────────────────────────────
@@ -133,8 +183,17 @@ export default function DentalCPRViewport({
 
       openGLWindow = vtkOpenGLRenderWindow.newInstance();
       openGLWindow.setContainer(container);
-      openGLWindow.setSize(container.clientWidth || 700, container.clientHeight || 450);
+      const initW = container.clientWidth  || 700;
+      const initH = container.clientHeight || 450;
+      openGLWindow.setSize(initW, initH);
       renderWindow.addView(openGLWindow);
+
+      // Constrain the vtk.js canvas CSS so it never expands the container
+      const glCanvas = container.querySelector('canvas');
+      if (glCanvas) {
+        glCanvas.style.width  = '100%';
+        glCanvas.style.height = '100%';
+      }
 
       interactor = vtkRenderWindowInteractor.newInstance();
       interactor.setView(openGLWindow);
@@ -152,12 +211,16 @@ export default function DentalCPRViewport({
       return;
     }
 
-    // Resize observer — keep vtk canvas in sync with container
+    // Resize observer — keep vtk canvas in sync with container.
+    // Guard against zero/huge sizes to avoid vtk.js canvas runaway.
     const observer = new ResizeObserver(entries => {
       for (const entry of entries) {
-        const { width, height } = entry.contentRect;
-        openGLWindow.setSize(Math.round(width), Math.round(height));
+        const w = Math.round(entry.contentRect.width);
+        const h = Math.round(entry.contentRect.height);
+        if (w < 10 || h < 10 || h > 10000) continue;
+        openGLWindow.setSize(w, h);
         renderWindow.render();
+        computeImageBounds(arcLengthMmRef.current);
       }
     });
     observer.observe(container);
@@ -179,12 +242,17 @@ export default function DentalCPRViewport({
     };
     const onMouseUp = () => { isDragging = false; };
 
-    // Wheel on panoramic → step through cross-sections
+    // Wheel on panoramic → step through cross-sections by sample index
     const onWheel = (e: WheelEvent) => {
-      if (!splineFramesRef.current.length) return;
+      const N = splineFramesRef.current.length;
+      if (!N) return;
       e.preventDefault();
       const step = e.deltaY > 0 ? 2 : -2;
-      navigateArch(cursorArcFracRef.current * 100 + step);
+      const newIdx = Math.max(0, Math.min(N - 1, cursorSampleIdxRef.current + step));
+      const { leftPct, rightPct } = cprImageBoundsRef.current;
+      const wFracs = arcFractionsRef.current;
+      const wArcFrac = wFracs.length > newIdx ? wFracs[newIdx] : newIdx / Math.max(N - 1, 1);
+      navigateArch(leftPct + wArcFrac * (rightPct - leftPct));
     };
 
     container.addEventListener('mousedown', onMouseDown);
@@ -377,6 +445,7 @@ export default function DentalCPRViewport({
           arcFracs[i] = arcLengthMm > 0 ? cumArc[i] / arcLengthMm : i / (cprFrames.length - 1);
         }
         arcFractionsRef.current = arcFracs;
+        arcLengthMmRef.current  = arcLengthMm;
         setSharedArcData(arcFracs, arcLengthMm);
 
         // Camera geometry (with viewUp=[1,0,0]):
@@ -397,12 +466,10 @@ export default function DentalCPRViewport({
         // archScale: minimum parallelScale needed to fit the full arch width on screen
         const archScale = (arcLengthMm / (2 * aspectRatio)) * 1.05;
 
-        // depthMm: use the actual CT scan height (Z-extent of the volume) so the
-        // full volume is always visible without cropping.
-        const volDims    = volume.imageData.getDimensions?.() ?? [1, 1, 1];
-        const volSpacing = volume.imageData.getSpacing?.()    ?? [1, 1, 1];
-        const scanHeightMm = volDims[2] * volSpacing[2];
-        const depthMm = Math.max(archScale * 2, scanHeightMm, 80);
+        // depthMm: dental CPR depth (crown to root tips).
+        // Using the full scan height wastes viewport space on empty air above/below teeth.
+        // Fit arch width first, let depth fill the remaining height.
+        const depthMm = Math.max(archScale * 2, 40);
 
         // parallelScale must be ≥ archScale (fits arch) AND ≥ depthMm/2 (shows full height).
         const parallelScale = Math.max(archScale, depthMm / 2);
@@ -428,27 +495,36 @@ export default function DentalCPRViewport({
 
         const actor = vtkImageSlice.newInstance();
         actor.setMapper(mapper);
-        actor.getProperty().setColorWindow(2000);
-        actor.getProperty().setColorLevel(500);
+        actor.getProperty().setColorWindow(3000);
+        actor.getProperty().setColorLevel(800);
 
         renderer.addActor(actor);
 
         const camera = renderer.getActiveCamera();
         camera.setParallelProjection(true);
 
-        // Step 1: first render so the CPR mapper computes its output image and
-        // the actor reports correct world-space bounds.
+        // Step 1: first render so the CPR mapper computes its output image.
         renderWindow.render();
 
-        // Step 2: set viewUp BEFORE resetCamera so vtk.js fits the frustum
-        // around the correct axis. viewUp=[1,0,0] makes world-X go UP on screen
-        // (tooth depth = vertical, arch length = horizontal).
-        // resetCamera() respects the current viewUp when sizing parallelScale.
+        // Step 2: manually fit camera to the CPR image bounds.
+        // vtk.js resetCamera() uses the bounding SPHERE which wastes ~50% of
+        // the viewport for elongated images.  We compute a tight-fit instead.
+        //
+        // With viewUp=[1,0,0]:
+        //   screen-vertical  = world-X (depth, range depthMm)
+        //   screen-horizontal = world-Y (arch, range arcLengthMm)
+        //
+        // parallelScale = half of the visible world-height (world-X).
+        // We need:  2*ps >= depthMm  AND  2*ps*aspect >= arcLengthMm
+        //   ⟹  ps >= max(depthMm/2, arcLengthMm/(2*aspect))
+        const tightScale = Math.max(depthMm / 2, arcLengthMm / (2 * aspectRatio)) * 1.05;
+
         camera.setViewUp(1, 0, 0);
-        renderer.resetCamera();
-        camera.setParallelScale(camera.getParallelScale() * 1.05); // 5 % margin
+        renderer.resetCamera();            // sets focal point + position correctly
+        camera.setParallelScale(tightScale); // override the loose bounding-sphere scale
         renderer.resetCameraClippingRange();
         renderWindow.render();
+        computeImageBounds(arcLengthMm); // update image bounds after camera is finalised
 
         console.log('[DentalCPR] CPR rendered — arc:', Math.round(arcLengthMm), 'mm',
           '| depthMm:', Math.round(depthMm),
@@ -472,6 +548,8 @@ export default function DentalCPRViewport({
           while (lo < hi) { const m = (lo+hi)>>1; if (arcFracs[m] < midFrac) lo=m+1; else hi=m; }
           midIdx = lo;
         }
+        cursorSampleIdxRef.current = midIdx;
+        setCursorSampleIdx(midIdx);
         cursorArcFracRef.current = midFrac;
         setCursorArcFrac(midFrac);
         window.dispatchEvent(
@@ -496,11 +574,13 @@ export default function DentalCPRViewport({
   // ── Cursor line + keyboard navigation ───────────────────────────────────
   useEffect(() => {
     const handler = (evt: Event) => {
-      const { splineIndex } = (evt as CustomEvent<CrossSectionEventDetail>).detail;
+      const { splineIndex, numSamples } = (evt as CustomEvent<CrossSectionEventDetail>).detail;
       const fracs = arcFractionsRef.current;
-      const frac  = fracs.length > splineIndex ? fracs[splineIndex] : splineIndex / Math.max((evt as CustomEvent<CrossSectionEventDetail>).detail.numSamples - 1, 1);
+      const frac  = fracs.length > splineIndex ? fracs[splineIndex] : splineIndex / Math.max(numSamples - 1, 1);
       cursorArcFracRef.current = frac;
+      cursorSampleIdxRef.current = splineIndex;
       setCursorArcFrac(frac);
+      setCursorSampleIdx(splineIndex);
     };
     window.addEventListener(ARCH_CROSS_SECTION_POSITION, handler);
     return () => window.removeEventListener(ARCH_CROSS_SECTION_POSITION, handler);
@@ -508,19 +588,32 @@ export default function DentalCPRViewport({
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (!splineFramesRef.current.length) return;
-      if (e.key === 'ArrowLeft') { e.preventDefault(); navigateArch(cursorArcFracRef.current * 100 - 2); }
-      if (e.key === 'ArrowRight') { e.preventDefault(); navigateArch(cursorArcFracRef.current * 100 + 2); }
+      const N = splineFramesRef.current.length;
+      if (!N) return;
+      if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+      e.preventDefault();
+      const step = e.key === 'ArrowLeft' ? -2 : 2;
+      const newIdx = Math.max(0, Math.min(N - 1, cursorSampleIdxRef.current + step));
+      const { leftPct, rightPct } = cprImageBoundsRef.current;
+      const kFracs = arcFractionsRef.current;
+      const kArcFrac = kFracs.length > newIdx ? kFracs[newIdx] : newIdx / Math.max(N - 1, 1);
+      navigateArch(leftPct + kArcFrac * (rightPct - leftPct));
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [navigateArch]);
 
-  // Cross-section wheel → navigate arch
+  // Cross-section viewport wheel → step arch by index (delta = ±3 sample steps)
   useEffect(() => {
     const handler = (e: Event) => {
       const { delta } = (e as CustomEvent<{ delta: number }>).detail;
-      navigateArch(cursorXPctRef.current + delta);
+      const N = splineFramesRef.current.length;
+      if (!N) return;
+      const newIdx = Math.max(0, Math.min(N - 1, cursorSampleIdxRef.current + delta));
+      const { leftPct, rightPct } = cprImageBoundsRef.current;
+      const dFracs = arcFractionsRef.current;
+      const dArcFrac = dFracs.length > newIdx ? dFracs[newIdx] : newIdx / Math.max(N - 1, 1);
+      navigateArch(leftPct + dArcFrac * (rightPct - leftPct));
     };
     window.addEventListener(ARCH_NAVIGATE_DELTA, handler);
     return () => window.removeEventListener(ARCH_NAVIGATE_DELTA, handler);
@@ -624,27 +717,50 @@ export default function DentalCPRViewport({
       {status === 'ready' && (
         <div style={{
           flexShrink: 0,
-          padding: '4px 12px',
+          height: 28,
+          position: 'relative',
           background: '#0d0d0d',
           borderBottom: '1px solid #1a1a1a',
-          display: 'flex',
-          alignItems: 'center',
-          gap: 8,
-          fontSize: 11,
-          color: Colors.textDim,
         }}>
-          <span>◀</span>
+          {/* Slider track positioned exactly over the CPR image (left% … right%) */}
           <input
             type="range"
             min={0}
             max={100}
             step={0.5}
-            value={(cursorArcFrac ?? 0.5) * 100}
-            onChange={e => navigateArch(Number(e.target.value))}
-            style={{ flex: 1, accentColor: Colors.primary, cursor: 'pointer' }}
+            value={cursorSampleIdx !== null
+              ? (arcFractionsRef.current.length > cursorSampleIdx
+                  ? arcFractionsRef.current[cursorSampleIdx] * 100
+                  : (cursorSampleIdx / Math.max((splineFramesRef.current.length || 1) - 1, 1)) * 100)
+              : 50}
+            onChange={e => {
+              const pct = Number(e.target.value);
+              const N = splineFramesRef.current.length || 1;
+              const { leftPct, rightPct } = cprImageBoundsRef.current;
+              navigateArch(leftPct + (pct / 100) * (rightPct - leftPct));
+            }}
+            style={{
+              position: 'absolute',
+              left: `${cprImgBounds.leftPct}%`,
+              width: `${cprImgBounds.rightPct - cprImgBounds.leftPct}%`,
+              top: '50%',
+              transform: 'translateY(-50%)',
+              accentColor: Colors.primary,
+              cursor: 'pointer',
+              margin: 0,
+            }}
           />
-          <span>▶</span>
-          <span style={{ color: '#555', minWidth: 44, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
+          {/* mm readout — floated to far right, never overlaps slider area */}
+          <span style={{
+            position: 'absolute',
+            right: 6,
+            top: '50%',
+            transform: 'translateY(-50%)',
+            color: '#555',
+            fontSize: 11,
+            fontVariantNumeric: 'tabular-nums',
+            pointerEvents: 'none',
+          }}>
             {Math.round((cursorArcFrac ?? 0.5) * getSharedTotalArcMm())}mm
           </span>
         </div>
@@ -655,6 +771,8 @@ export default function DentalCPRViewport({
         ref={vtkContainerRef}
         style={{
           flex: 1,
+          minHeight: 0,
+          overflow: 'hidden',
           position: 'relative',
           background: '#050505',
           cursor: status === 'ready' ? 'col-resize' : 'default',
@@ -710,35 +828,32 @@ export default function DentalCPRViewport({
           </div>
         )}
 
-        {/* Cross-section cursor lines: ⊥ Prev (dashed), ⊥ Center (solid), ⊥ Next (dashed) */}
-        {cursorArcFrac !== null && (() => {
-          const fracs     = arcFractionsRef.current;
-          const cursorPct = (cursorArcFrac ?? 0.5) * 100;
-          // Find nearest index for prev/next cursor lines using arc-fractions
-          const frames    = splineFramesRef.current;
-          const numSamples = frames.length || 1;
-          let centerIdx = 0;
-          if (fracs.length === numSamples && numSamples > 1) {
-            let lo = 0, hi = numSamples - 1;
-            const frac = cursorArcFrac ?? 0.5;
-            while (lo < hi) { const m = (lo+hi)>>1; if (fracs[m] < frac) lo=m+1; else hi=m; }
-            centerIdx = lo;
-          } else {
-            centerIdx = Math.round((cursorArcFrac ?? 0.5) * (numSamples - 1));
-          }
-          const prevIdx = Math.max(0, centerIdx - CROSS_SECTION_STEP);
-          const nextIdx = Math.min(numSamples - 1, centerIdx + CROSS_SECTION_STEP);
-          const prevPct = (fracs.length === numSamples ? fracs[prevIdx] : prevIdx / (numSamples - 1)) * 100;
-          const nextPct = (fracs.length === numSamples ? fracs[nextIdx] : nextIdx / (numSamples - 1)) * 100;
+        {/* Cross-section cursor lines: ⊥ Prev (dashed), ⊥ Center (solid), ⊥ Next (dashed)
+            Positions are computed via arcFracs[idx] so they align with vtk.js CPR column
+            placement (arc-length based, not uniform index). cprImageBoundsRef maps image → div %. */}
+        {cursorSampleIdx !== null && (() => {
+          const N = splineFramesRef.current.length || 1;
+          const { leftPct, rightPct } = cprImageBoundsRef.current;
+          // Convert sample index → div-% via arc-length fractions (matches vtk.js column placement)
+          const toPct = (idx: number) => {
+            const clampedIdx = Math.max(0, Math.min(N - 1, idx));
+            const fracs = arcFractionsRef.current;
+            const arcFrac = fracs.length > clampedIdx ? fracs[clampedIdx] : clampedIdx / Math.max(N - 1, 1);
+            return leftPct + arcFrac * (rightPct - leftPct);
+          };
+
+          const centerX = toPct(cursorSampleIdx);
+          const prevX   = toPct(cursorSampleIdx - CROSS_SECTION_STEP);
+          const nextX   = toPct(cursorSampleIdx + CROSS_SECTION_STEP);
           const dashedBg = `repeating-linear-gradient(to bottom, ${Colors.primary} 0px, ${Colors.primary} 5px, transparent 5px, transparent 10px)`;
           return (
             <>
-              <div style={{ position: 'absolute', left: `${prevPct}%`, top: 0, bottom: 0, width: 1,
+              <div style={{ position: 'absolute', left: `${prevX}%`, top: 0, bottom: 0, width: 1,
                 background: dashedBg, opacity: 0.7, pointerEvents: 'none', zIndex: 10 }} />
-              <div style={{ position: 'absolute', left: `${cursorPct}%`, top: 0, bottom: 0, width: 2,
+              <div style={{ position: 'absolute', left: `${centerX}%`, top: 0, bottom: 0, width: 2,
                 background: Colors.primary, opacity: 0.9, pointerEvents: 'none', zIndex: 11,
                 boxShadow: `0 0 5px ${Colors.primary}99` }} />
-              <div style={{ position: 'absolute', left: `${nextPct}%`, top: 0, bottom: 0, width: 1,
+              <div style={{ position: 'absolute', left: `${nextX}%`, top: 0, bottom: 0, width: 1,
                 background: dashedBg, opacity: 0.7, pointerEvents: 'none', zIndex: 10 }} />
             </>
           );

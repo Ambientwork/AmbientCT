@@ -10,8 +10,9 @@ import { getSharedFrames } from '../utils/dentalState';
 import ViewerToolbar from '../components/ViewerToolbar';
 
 const AXIAL_OVERLAY_ID = 'dental-axial-xsect-overlay';
-// Half-width of the cross-section field (SLICE_SIZE_MM / 2 = 80 / 2)
-const FAR_MM = 40;
+// Half-length of cross-section indicator lines on axial view (mm).
+// Matches SLICE_SIZE_MM / 2 = 80 / 2 in DentalCrossSectionViewport.
+const LINE_HALF_MM = 40;
 
 function findAxialViewport() {
   for (const engine of getRenderingEngines()) {
@@ -69,35 +70,17 @@ export default function DentalContainerViewport(props: any) {
       const frames = getSharedFrames();
       if (!frames.length) return;
 
-      // ── Shared orientation from CENTER frame so all 3 rectangles are parallel ──
       const centerIdx = Math.max(0, Math.min(numSamples - 1, splineIndex));
-      const cf = frames[centerIdx];
-      if (!cf) return;
+      if (!frames[centerIdx]) return;
 
-      const [Nx, Ny, Nz] = cf.normal;   // buccal-lingual (cross-section width axis)
-      const [Bx, By, Bz] = cf.binormal; // inferior direction (≈ world -Z)
-      // Arch tangent T = N × B (gives the along-arch direction in the axial plane)
-      const Tx_raw = Ny * Bz - Nz * By;
-      const Ty_raw = Nz * Bx - Nx * Bz;
-      const Tz_raw = Nx * By - Ny * Bx;
-      const Tlen = Math.sqrt(Tx_raw ** 2 + Ty_raw ** 2 + Tz_raw ** 2) || 1;
-      const [Tx, Ty, Tz] = [Tx_raw / Tlen, Ty_raw / Tlen, Tz_raw / Tlen];
-
-      // Rectangle geometry:
-      //   ±FAR_MM   along N = buccal-lingual width (= cross-section field width)
-      //   ±HALF_D   along T = arch-tangent depth  (= half the 3-D distance between Prev and Next frames)
-      const prevFrame = frames[Math.max(0, centerIdx - CROSS_SECTION_STEP)];
-      const nextFrame = frames[Math.min(numSamples - 1, centerIdx + CROSS_SECTION_STEP)];
-      const [ppx, ppy, ppz] = prevFrame?.point ?? cf.point;
-      const [npx, npy, npz] = nextFrame?.point ?? cf.point;
-      const stepDist = Math.sqrt((npx-ppx)**2 + (npy-ppy)**2 + (npz-ppz)**2);
-      const HALF_D = stepDist / 2; // half the Prev→Next distance
-
-      // prev=dashed blue, center=solid green, next=dashed blue
+      // Draw thin perpendicular lines at each cross-section position.
+      // Each line uses its OWN frame's normal (buccal-lingual direction) so
+      // lines are truly perpendicular to the arch at that specific point.
+      // This matches exactly what the cross-section viewport samples.
       const slots = [
-        { offset: -CROSS_SECTION_STEP, color: '#00aaff', dash: [5, 4] as number[], lw: 1.5 },
-        { offset: 0,                   color: '#00ff88', dash: [] as number[],      lw: 2   },
-        { offset:  CROSS_SECTION_STEP, color: '#00aaff', dash: [5, 4] as number[], lw: 1.5 },
+        { offset: -CROSS_SECTION_STEP, color: '#00aaff', dash: [5, 4] as number[], lw: 1   },
+        { offset: 0,                   color: '#00ff88', dash: [] as number[],      lw: 1.5 },
+        { offset:  CROSS_SECTION_STEP, color: '#00aaff', dash: [5, 4] as number[], lw: 1   },
       ];
 
       for (const { offset, color, dash, lw } of slots) {
@@ -106,27 +89,23 @@ export default function DentalContainerViewport(props: any) {
         if (!frame) continue;
 
         const [px, py, pz] = frame.point;
+        const [Nx, Ny, Nz] = frame.normal; // buccal-lingual at THIS point
 
-        // Four corners of the cross-section rectangle projected onto the axial plane:
-        //   width  = 80 mm along N (center frame's buccal-lingual axis)
-        //   height = 4 mm along T (arch-tangent, shows slice position/thickness)
-        const corners = [
-          [px + Nx * FAR_MM + Tx * HALF_D, py + Ny * FAR_MM + Ty * HALF_D, pz + Nz * FAR_MM + Tz * HALF_D],
-          [px - Nx * FAR_MM + Tx * HALF_D, py - Ny * FAR_MM + Ty * HALF_D, pz - Nz * FAR_MM + Tz * HALF_D],
-          [px - Nx * FAR_MM - Tx * HALF_D, py - Ny * FAR_MM - Ty * HALF_D, pz - Nz * FAR_MM - Tz * HALF_D],
-          [px + Nx * FAR_MM - Tx * HALF_D, py + Ny * FAR_MM - Ty * HALF_D, pz + Nz * FAR_MM - Tz * HALF_D],
-        ].map(p => vp.worldToCanvas(p as any));
+        // Line endpoints: ±LINE_HALF_MM along N from frame.point
+        const p1 = vp.worldToCanvas([
+          px + Nx * LINE_HALF_MM, py + Ny * LINE_HALF_MM, pz + Nz * LINE_HALF_MM
+        ] as any);
+        const p2 = vp.worldToCanvas([
+          px - Nx * LINE_HALF_MM, py - Ny * LINE_HALF_MM, pz - Nz * LINE_HALF_MM
+        ] as any);
 
         ctx.save();
         ctx.beginPath();
         ctx.strokeStyle = color;
         ctx.lineWidth   = lw;
         ctx.setLineDash(dash);
-        ctx.moveTo(corners[0][0], corners[0][1]);
-        ctx.lineTo(corners[1][0], corners[1][1]);
-        ctx.lineTo(corners[2][0], corners[2][1]);
-        ctx.lineTo(corners[3][0], corners[3][1]);
-        ctx.closePath();
+        ctx.moveTo(p1[0], p1[1]);
+        ctx.lineTo(p2[0], p2[1]);
         ctx.stroke();
         ctx.restore();
       }

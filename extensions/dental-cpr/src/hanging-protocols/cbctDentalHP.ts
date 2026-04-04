@@ -60,6 +60,9 @@ export const cbctDentalHP = {
             viewportType: 'stack',
             toolGroupId: 'dentalCPRToolGroup',
             background: [0, 0, 0],
+            // Start at middle slice so the user immediately sees dental anatomy
+            // instead of empty space at the top of the scan.
+            initialImageIndex: 'middle',
           },
           displaySets: [{ id: 'ctDisplaySet' }],
         },

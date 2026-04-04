@@ -67,3 +67,18 @@ When superpowers MCP is available, use it for:
 ## Context management
 - Run `/compact` after completing each major task
 - This file is your re-entry point after compaction
+
+## Agent Harness Optimierung
+
+### Reasoning Sandwich
+Bei komplexen Tasks: Plane ausführlich (Phase 1), implementiere effizient (Phase 2),
+verifiziere gründlich (Phase 3). Investiere 40% der Tokens in Planung + Verifizierung.
+
+### Self-Verification
+Nach JEDEM Feature: Prüfe ob das Ergebnis die ursprüngliche Anforderung erfüllt.
+Nicht nur "Tests grün" sondern "löst das tatsächlich das Problem?"
+Checklist: 1) Tests grün? 2) Löst es das Problem? 3) Keine Regression? 4) Code clean?
+
+### Execution Traces
+Lies vorherige Logs in ~/dev/logs/agents/ bevor du ähnliche Tasks startest.
+Lerne aus vergangenen Fehlern statt sie zu wiederholen.

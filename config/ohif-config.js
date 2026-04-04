@@ -73,13 +73,11 @@ window.config = {
   },
 
   // ---------------------------------------------------------------------------
-  // Dental Hanging Protocols
-  // Automatically select the best viewport layout based on DICOM Modality tag.
-  //   CT  (CBCT/DVT)   -> MPR layout (axial + sagittal + coronal)
-  //   DX  (OPG/Panoramic/Intraoral) -> Single 2D viewport
-  //   IO  (Intraoral series) -> 2x2 grid layout
+  // Dental Hanging Protocols — DISABLED (window.config hangingProtocols is not
+  // a supported OHIF v3 key; protocols cause viewer crash via invalid constraint
+  // syntax. Register via mode's getHangingProtocolModule instead.)
   // ---------------------------------------------------------------------------
-  hangingProtocols: [
+  _hangingProtocols_disabled: [
     // CBCT / DVT -> MPR (3-panel: axial, sagittal, coronal)
     {
       id: 'dental-cbct-mpr',
