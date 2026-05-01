@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { getRenderingEngines } from '@cornerstonejs/core';
 import DentalCPRViewport from './DentalCPRViewport';
 import DentalCrossSectionViewport, {
@@ -7,7 +7,13 @@ import DentalCrossSectionViewport, {
 } from './DentalCrossSectionViewport';
 import type { CrossSectionEventDetail } from './DentalCrossSectionViewport';
 import { getSharedFrames } from '../utils/dentalState';
-import ViewerToolbar from '../components/ViewerToolbar';
+import ViewerToolbar, { type MarStatus } from '../components/ViewerToolbar';
+import { OrthancClient } from '../utils/orthancClient';
+
+// MAR-Processor URL — separater Docker-Container (Port 8000).
+// Kann via window.__MAR_URL__ in ohif-config.js überschrieben werden.
+const MAR_URL: string = (window as any).__MAR_URL__ ?? 'http://localhost:8000';
+const MAR_POLL_INTERVAL_MS = 1500;
 
 const AXIAL_OVERLAY_ID = 'dental-axial-xsect-overlay';
 // Half-length of cross-section indicator lines on axial view (mm).
@@ -36,6 +42,68 @@ export default function DentalContainerViewport(props: any) {
   const patientName: string = ds.PatientName ?? ds.patientName ?? 'Unbekannt';
   const modality: string    = ds.Modality    ?? ds.modality    ?? 'CT';
   const studyDate: string   = ds.StudyDate   ?? ds.studyDate   ?? '';
+
+  // ── MAR-State ────────────────────────────────────────────────────────────────
+  const [marStatus, setMarStatus]     = useState<MarStatus>('idle');
+  const [marProgress, setMarProgress] = useState(0);
+  const [marSeriesUid, setMarSeriesUid] = useState<string | undefined>();
+  const marPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const handleMarTrigger = useCallback(async () => {
+    // Extrahiere SeriesInstanceUID aus dem ersten DisplaySet
+    const seriesUID: string | undefined =
+      ds.SeriesInstanceUID ?? ds.seriesInstanceUID ?? ds.series?.SeriesInstanceUID;
+
+    if (!seriesUID) {
+      console.error('[MAR] Keine SeriesInstanceUID im DisplaySet gefunden.');
+      setMarStatus('error');
+      return;
+    }
+
+    setMarStatus('processing');
+    setMarProgress(0);
+
+    const orthancBase = (window as any).config?.dataSources?.[0]?.configuration?.qidoRoot
+      ?? '/dicom-web';
+    // OrthancClient-Instanz für MAR-Trigger
+    const client = new OrthancClient(orthancBase.replace('/dicom-web', ''));
+
+    try {
+      const jobId = await client.triggerMar(seriesUID, MAR_URL);
+
+      // Fortschritt pollen
+      marPollRef.current = setInterval(async () => {
+        try {
+          const status = await client.getMarJobStatus(jobId, MAR_URL);
+          setMarProgress(Math.round(status.progress * 100));
+
+          if (status.status === 'completed' && status.mar_series_uid) {
+            clearInterval(marPollRef.current!);
+            setMarStatus('done');
+            setMarProgress(100);
+            setMarSeriesUid(status.mar_series_uid);
+          } else if (status.status === 'error') {
+            clearInterval(marPollRef.current!);
+            setMarStatus('error');
+            console.error('[MAR] Verarbeitung fehlgeschlagen:', status.error);
+          }
+        } catch (e) {
+          console.warn('[MAR] Polling-Fehler:', e);
+        }
+      }, MAR_POLL_INTERVAL_MS);
+
+    } catch (e) {
+      console.error('[MAR] Job-Start fehlgeschlagen:', e);
+      setMarStatus('error');
+    }
+  }, [ds]);
+
+  // Cleanup bei Unmount
+  useEffect(() => {
+    return () => {
+      if (marPollRef.current) clearInterval(marPollRef.current);
+    };
+  }, []);
 
   // ── Axial cross-section overlay ─────────────────────────────────────────────
   useEffect(() => {
@@ -153,6 +221,10 @@ export default function DentalContainerViewport(props: any) {
         modality={modality}
         studyDate={studyDate}
         onClose={onClose}
+        marStatus={marStatus}
+        marProgress={marProgress}
+        marSeriesUid={marSeriesUid}
+        onMarTrigger={handleMarTrigger}
       />
       <div style={{ flex: '6', minHeight: 0, overflow: 'hidden' }}>
         <DentalCPRViewport viewportId="dentalCPR" {...sharedProps} />

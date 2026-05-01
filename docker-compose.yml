@@ -11,7 +11,7 @@ services:
       - "${ORTHANC_DICOM_PORT:-4242}:4242"
     environment:
       ORTHANC__NAME: "${ORTHANC_INSTANCE_NAME:-AmbientCT}"
-      ORTHANC__AUTHENTICATION_ENABLED: "false"
+      ORTHANC__AUTHENTICATION_ENABLED: "true"
       ORTHANC__REGISTERED_USERS: '{"${ORTHANC_USER:-admin}": "${ORTHANC_PASSWORD:?ORTHANC_PASSWORD must be set in .env}"}'
       ORTHANC__DICOM_AET: "${DICOM_AE_TITLE:-DENTALPACS}"
       ORTHANC__DICOM_CHECK_CALLED_AET: "false"
@@ -101,12 +101,51 @@ services:
       start_period: 60s
 
   # ---------------------------------------------------------------------------
+  # mar-processor: Python-Service für Metal Artifact Reduction (post-reconstruction).
+  # Verarbeitet DICOM-Serien on-demand, speichert MAR-Ergebnis als neue Serie in Orthanc.
+  # API: POST /api/process-mar  |  GET /api/job/{job_id}
+  # ---------------------------------------------------------------------------
+  mar-processor:
+    build:
+      context: ./mar-processor
+      dockerfile: Dockerfile
+    platform: linux/amd64
+    container_name: ambientct-mar
+    restart: unless-stopped
+    mem_limit: ${MAR_MEM_LIMIT:-1g}
+    cpus: ${MAR_CPUS:-2.0}
+    ports:
+      - "${MAR_PORT:-8000}:8000"
+    environment:
+      ORTHANC_URL: "http://orthanc:8042"
+      ORTHANC_USER: "${ORTHANC_USER:-admin}"
+      ORTHANC_PASSWORD: "${ORTHANC_PASSWORD:?ORTHANC_PASSWORD must be set in .env}"
+    networks:
+      - pacs-net
+    depends_on:
+      orthanc:
+        condition: service_healthy
+    logging:
+      driver: json-file
+      options:
+        max-size: "${LOG_MAX_SIZE:-10m}"
+        max-file: "${LOG_MAX_FILE:-3}"
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health')\""]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
+  # ---------------------------------------------------------------------------
   # viewer-stock: Pre-built OHIF image (no dental extensions).
   # Use for quick testing without a full build:
   #   docker compose up -d viewer-stock
   # ---------------------------------------------------------------------------
   viewer-stock:
     image: ohif/app:${OHIF_VERSION:-v3.9.2}
+    profiles:
+      - stock
     platform: linux/amd64
     container_name: ambientct-viewer-stock
     restart: unless-stopped

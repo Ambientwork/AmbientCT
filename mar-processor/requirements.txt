@@ -1,0 +1,7 @@
+pydicom==2.4.4
+numpy==1.26.4
+opencv-python-headless==4.9.0.80
+scipy==1.13.0
+fastapi==0.111.0
+uvicorn[standard]==0.29.0
+requests==2.31.0

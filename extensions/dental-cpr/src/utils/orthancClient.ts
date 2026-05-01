@@ -1,5 +1,14 @@
 // extensions/dental-cpr/src/utils/orthancClient.ts
 
+export interface MarJobStatus {
+  job_id: string;
+  status: 'queued' | 'processing' | 'completed' | 'error';
+  progress: number;        // 0.0 – 1.0
+  message?: string;
+  mar_series_uid?: string;
+  error?: string;
+}
+
 export interface StudySummary {
   studyInstanceUID: string;
   patientName: string;
@@ -12,6 +21,28 @@ export interface StudySummary {
 export interface StoredStudySummary extends StudySummary {
   lastOpenedAt?: string;  // ISO timestamp
   importedAt?: string;    // ISO timestamp
+}
+
+export interface UploadResult {
+  studyInstanceUID: string | null;
+}
+
+export function getStudyModalities(modality: string): string[] {
+  return String(modality || '')
+    .split('\\')
+    .map(value => value.trim().toUpperCase())
+    .filter(Boolean);
+}
+
+export function supportsDentalViewer(study: Pick<StudySummary, 'modality'>): boolean {
+  return getStudyModalities(study.modality).includes('CT');
+}
+
+export function getStudyViewerPath(
+  study: Pick<StudySummary, 'studyInstanceUID' | 'modality'>
+): string {
+  const route = supportsDentalViewer(study) ? '/dentalCPR' : '/viewer';
+  return `${route}?StudyInstanceUIDs=${encodeURIComponent(study.studyInstanceUID)}`;
 }
 
 // ── DICOMweb tag helpers ────────────────────────────────────────────────────
@@ -42,7 +73,7 @@ export function parseStudyResponse(raw: any): StudySummary {
   // Modality: prefer ModalitiesInStudy (0008,0061) → fallback to Modality (0008,0060)
   const modalitiesArr = tag(raw, '00080061');
   const modality = Array.isArray(modalitiesArr) && modalitiesArr.length > 0
-    ? modalitiesArr[0]
+    ? modalitiesArr.join('\\')
     : (str(raw, '00080060') || '—');
 
   return {
@@ -78,19 +109,61 @@ export class OrthancClient {
     return data.map(parseStudyResponse).filter(s => s.studyInstanceUID);
   }
 
-  /** POST /studies (STOW-RS multipart). Returns true on success. */
-  async uploadDicom(file: File): Promise<void> {
-    const boundary = `----AmbientCTBoundary${Date.now()}`;
-    const body = await buildStowMultipart(file, boundary);
-    const r = await fetch(`${this.base}/studies`, {
+  // ── MAR (Metal Artifact Reduction) ─────────────────────────────────────────
+
+  /**
+   * Startet einen asynchronen MAR-Job für eine DICOM-Serie.
+   * Der MAR-Processor läuft auf MAR_URL (default: http://localhost:8000).
+   * Gibt die job_id zurück — Status via pollMarJob() abfragen.
+   */
+  async triggerMar(seriesInstanceUID: string, marUrl: string): Promise<string> {
+    const r = await fetch(`${marUrl}/api/process-mar`, {
       method: 'POST',
-      headers: { 'Content-Type': `multipart/related; type=application/dicom; boundary=${boundary}` },
-      body,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ series_instance_uid: seriesInstanceUID }),
     });
+    if (!r.ok) {
+      const text = await r.text().catch(() => r.statusText);
+      throw new Error(`MAR-Start fehlgeschlagen: ${text || r.status}`);
+    }
+    const { job_id } = await r.json();
+    return job_id as string;
+  }
+
+  /**
+   * Fragt den Status eines laufenden MAR-Jobs ab.
+   */
+  async getMarJobStatus(jobId: string, marUrl: string): Promise<MarJobStatus> {
+    const r = await fetch(`${marUrl}/api/job/${jobId}`);
+    if (!r.ok) throw new Error(`Job-Status-Abfrage fehlgeschlagen: ${r.status}`);
+    return r.json() as Promise<MarJobStatus>;
+  }
+
+  /**
+   * Upload a DICOM payload.
+   * `.dcm` files use STOW-RS, `.zip` archives use Orthanc's REST import.
+   */
+  async uploadDicom(file: File): Promise<UploadResult> {
+    const zipUpload = isZipFile(file);
+    const r = zipUpload
+      ? await fetch(`${getOrthancRestBase(this.base)}/instances`, {
+          method: 'POST',
+          headers: { 'Content-Type': file.type || 'application/zip' },
+          body: await file.arrayBuffer(),
+        })
+      : await uploadDicomViaStow(this.base, file);
+
     if (!r.ok) {
       const text = await r.text().catch(() => r.statusText);
       throw new Error(text || `${r.status}`);
     }
+
+    const payload = await r.json().catch(() => null);
+    const studyInstanceUID = zipUpload
+      ? await resolveStudyInstanceUIDFromOrthancUpload(this.base, payload)
+      : getStudyInstanceUIDFromStowResponse(payload);
+
+    return { studyInstanceUID };
   }
 }
 
@@ -106,6 +179,53 @@ async function buildStowMultipart(file: File, boundary: string): Promise<ArrayBu
   merged.set(new Uint8Array(fileData), headerBuf.byteLength);
   merged.set(new Uint8Array(footerBuf), headerBuf.byteLength + fileData.byteLength);
   return merged.buffer;
+}
+
+async function uploadDicomViaStow(base: string, file: File): Promise<Response> {
+  const boundary = `----AmbientCTBoundary${Date.now()}`;
+  const body = await buildStowMultipart(file, boundary);
+
+  return fetch(`${base}/studies`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': `multipart/related; type=application/dicom; boundary=${boundary}`,
+    },
+    body,
+  });
+}
+
+export function isZipFile(file: Pick<File, 'name' | 'type'>): boolean {
+  const name = file.name.toLowerCase();
+  return name.endsWith('.zip') || file.type === 'application/zip';
+}
+
+export function getOrthancRestBase(base: string): string {
+  return base.replace(/\/dicom-web\/?$/, '');
+}
+
+export function getStudyInstanceUIDFromStowResponse(payload: any): string | null {
+  const studyUrl = payload?.['00081190']?.Value?.[0];
+  if (typeof studyUrl !== 'string') {
+    return null;
+  }
+
+  const match = studyUrl.match(/\/studies\/([^/]+)/);
+  return match?.[1] ?? null;
+}
+
+async function resolveStudyInstanceUIDFromOrthancUpload(base: string, payload: any): Promise<string | null> {
+  const orthancStudyId = payload?.ParentStudy;
+  if (typeof orthancStudyId !== 'string' || !orthancStudyId) {
+    return null;
+  }
+
+  const response = await fetch(`${getOrthancRestBase(base)}/studies/${orthancStudyId}`);
+  if (!response.ok) {
+    return null;
+  }
+
+  const study = await response.json().catch(() => null);
+  return study?.MainDicomTags?.StudyInstanceUID ?? null;
 }
 
 // ── localStorage helpers ────────────────────────────────────────────────────

@@ -3,6 +3,22 @@
 All notable changes to AmbientCT will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.1.0] - 2026-05-01
+
+### Added
+- **Metal Artifact Reduction (MAR)** — neuer `mar-processor` Docker-Service (Python/FastAPI)
+  - On-demand Verarbeitung via UI-Toggle in der ViewerToolbar (✦ MAR Button)
+  - Algorithmus: Metallsegmentierung (HU > 2500) → OpenCV TELEA-Inpainting → Bilateraler Filter im Übergangsbereich
+  - Async Job-Queue mit Echtzeit-Fortschrittsanzeige (Polling alle 1,5 s)
+  - Ergebnis wird als neue Serie `_MAR` in Orthanc gespeichert — wählbar in der OHIF-Seitenliste
+  - Konfigurierbar via `.env`: `MAR_PORT`, `MAR_MEM_LIMIT`, `MAR_CPUS`
+  - `window.__MAR_URL__` für produktive Deployments mit Nginx-Proxy
+
+### Changed
+- `ViewerToolbar`: MAR-Button mit Spinner + Fortschrittsbalken + Done-Hint
+- `DentalContainerViewport`: MAR-State-Management + Job-Polling
+- `orthancClient.ts`: `triggerMar()`, `getMarJobStatus()`, `MarJobStatus`-Interface
+
 ## [1.0.0] - 2026-03-23
 
 Initial public release — open-source DICOM viewer for dental and medical practices.
