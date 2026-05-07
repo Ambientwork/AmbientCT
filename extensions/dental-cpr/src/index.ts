@@ -6,10 +6,16 @@ import React from 'react';
 import ReactDOM from 'react-dom/client';
 import DentalFileManager from './viewports/DentalFileManager';
 import { getStudyViewerPath } from './utils/orthancClient';
+import AiAssistPanel from './components/AiAssistPanel';
 
 export { default as DentalArchSplineTool, ARCH_SPLINE_COMPLETED } from './tools/DentalArchSplineTool';
 export { buildCenterline, buildCenterlinePoints } from './utils/buildCenterline';
 export { ARCH_CROSS_SECTION_POSITION } from './viewports/DentalCrossSectionViewport';
+
+// AI Assist — public API (research preview, not for diagnosis)
+export * from './ai/types';
+export { findingsStore } from './ai/findingsStore';
+export { inferenceClient, InferenceClient } from './ai/inferenceClient';
 
 /**
  * @ambientwork/ohif-extension-dental-cpr
@@ -108,6 +114,30 @@ const extension = {
    * OHIF's cornerstone extension calls getCommandsModule and getToolbarModule
    * from here; we use preRegistration to call addTool() globally.
    */
+  /**
+   * Registers the AI Assist panel.
+   * Referenced as: @ambientwork/ohif-extension-dental-cpr.panelModule.aiAssist
+   */
+  getPanelModule({ servicesManager }: any) {
+    return [
+      {
+        // `name` becomes data-cy="aiAssist-btn" on the tab button — the
+        // most reliable selector for E2E tests (OHIF v3 renders tab labels
+        // as icons only; iconLabel is NOT placed as visible text or aria-
+        // label on the tab itself).
+        name:           'aiAssist',
+        // Pinned to a real OHIF icon to avoid "Missing icon" placeholder.
+        // 'tab-segmentation' fits the AI-suggested-anatomy semantics.
+        iconName:       'tab-segmentation',
+        iconLabel:      'AI Assist',
+        label:          'AI Assist',
+        secondaryLabel: 'AI Assist',
+        component:      (props: any) =>
+          React.createElement(AiAssistPanel, { ...props, servicesManager }),
+      },
+    ];
+  },
+
   getCommandsModule({ servicesManager, commandsManager }: any) {
     return {
       name: 'dentalCPRCommands',

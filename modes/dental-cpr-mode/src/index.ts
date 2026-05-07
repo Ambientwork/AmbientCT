@@ -38,6 +38,7 @@ function modeFactory() {
             leftPanels: [],
             rightPanels: [
               '@ambientwork/ohif-extension-dental-tools.panelModule.dentalTools',
+              '@ambientwork/ohif-extension-dental-cpr.panelModule.aiAssist',
             ],
             viewports: [
               // Single entry — DentalViewRouter handles all three panes.

@@ -71,10 +71,27 @@ Storage: Orthanc → SQLite + filesystem (./data/orthanc-db/)
 
 ---
 
+## AI Assist (research preview)
+
+AmbientCT ships an early-stage **AI Assist** layer for dental CBCT review. It is a foundation, not a product feature: the data model, panel UI, and inference adapter are in place, backed by a local browser-side mock with clearly marked demo data. No image, header, or log ever leaves your machine.
+
+| What works today | What is intentionally mocked |
+|------------------|------------------------------|
+| Typed data model for jobs, findings, anatomy segmentations | Real model inference (no weights downloaded) |
+| Findings store with reviewer state (accept / reject / edited) | Out-of-distribution detection (placeholder only) |
+| AI Assist right-panel with confidence + uncertainty display | Persistence to Orthanc metadata (in-memory + localStorage only) |
+| Adapter API mirroring the planned local FastAPI service shape | Audit-log persistence (logged in-browser only) |
+
+Every suggestion is labeled **"Research Preview · Demo Data · Not for Diagnosis"** and requires clinician confirmation. The first real model integration target is mandibular-canal anatomy segmentation, following the [DentalSegmentator](https://github.com/gaudot/SlicerDentalSegmentator) and [MONAI Label](https://monai.io/label.html) approach. See [`docs/AI-ASSIST-ARCHITECTURE.md`](docs/AI-ASSIST-ARCHITECTURE.md) for the phased roadmap and risk controls, and [`docs/DENTAL-FEATURES-ROADMAP.md`](docs/DENTAL-FEATURES-ROADMAP.md) for the broader feature plan.
+
+---
+
 ## Documentation
 
 - [Setup Guide](docs/SETUP-GUIDE.md)
 - [Architecture Decisions](docs/ARCHITECTURE.md)
+- [AI Assist Architecture](docs/AI-ASSIST-ARCHITECTURE.md)
+- [Dental Features Roadmap](docs/DENTAL-FEATURES-ROADMAP.md)
 - [Troubleshooting](docs/TROUBLESHOOTING.md)
 - [Third-Party Notices](THIRD_PARTY_NOTICES.md)
 
@@ -82,7 +99,7 @@ Storage: Orthanc → SQLite + filesystem (./data/orthanc-db/)
 
 ## Disclaimer
 
-AmbientCT is **not FDA- or CE-certified**. It is intended for informational and workflow purposes only. Clinical diagnostic decisions must be made by licensed healthcare professionals using certified software.
+AmbientCT is **not FDA- or CE-certified**. It is intended for informational and workflow purposes only. Clinical diagnostic decisions must be made by licensed healthcare professionals using certified software. The AI Assist layer is a research preview and does not perform autonomous diagnosis.
 
 ---
 
