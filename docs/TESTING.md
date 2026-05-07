@@ -2,16 +2,16 @@
 
 ## Smoke test (after every change)
 ```bash
-./tests/smoke-test.sh
+./scripts/smoke-test.sh
 ```
 
 Expected output:
 ```
 ✓ Orthanc responding on :8042
 ✓ Orthanc DICOMweb endpoint accessible
-✓ OHIF responding on :3000
+✓ AmbientCT responding on :3000
 ✓ DICOM upload via REST API succeeds
-✓ Study appears in OHIF study list
+✓ Study appears in AmbientCT study list
 ```
 
 ## Manual test (after UI changes)

@@ -1,4 +1,5 @@
-import { ArrowAnnotateTool, annotation, triggerAnnotationModified, eventTarget } from '@cornerstonejs/tools';
+import { ArrowAnnotateTool, annotation } from '@cornerstonejs/tools';
+import { eventTarget } from '@cornerstonejs/core';
 
 // IMPORTANT: The correct class name is ArrowAnnotateTool (no "ion").
 // ArrowAnnotationTool does NOT exist in Cornerstone3D — using it would fail silently.

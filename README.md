@@ -55,7 +55,7 @@ Open **http://localhost:3000** — your PACS is running.
 ## Architecture
 
 ```
-Browser → Nginx :443 → OHIF Viewer :3000   (React + WebGL)
+Browser → Nginx :443 → AmbientCT Viewer :3000   (React + WebGL, built on OHIF)
                      → Orthanc :8042        (DICOMweb REST API)
                      → Orthanc :4242        (DICOM DIMSE, LAN only)
 
@@ -65,7 +65,7 @@ Storage: Orthanc → SQLite + filesystem (./data/orthanc-db/)
 | Component | Version | Role |
 |-----------|---------|------|
 | [Orthanc](https://www.orthanc-server.com/) | 24.12.2 | PACS server, DICOMweb, DIMSE |
-| [OHIF Viewer](https://ohif.org/) | v3.9.2 | Web imaging frontend |
+| [AmbientCT Viewer](https://github.com/Ambientwork/AmbientCT) | v0.2.0 | Web imaging frontend, built on OHIF v3.9.2 |
 | [Cornerstone3D](https://www.cornerstonejs.org/) | latest | 3D rendering engine |
 | Nginx | latest | Reverse proxy |
 
@@ -76,6 +76,7 @@ Storage: Orthanc → SQLite + filesystem (./data/orthanc-db/)
 - [Setup Guide](docs/SETUP-GUIDE.md)
 - [Architecture Decisions](docs/ARCHITECTURE.md)
 - [Troubleshooting](docs/TROUBLESHOOTING.md)
+- [Third-Party Notices](THIRD_PARTY_NOTICES.md)
 
 ---
 

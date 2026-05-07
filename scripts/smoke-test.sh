@@ -18,7 +18,7 @@ usage() {
 Usage: ./scripts/smoke-test.sh [OPTIONS]
 
 Validates that all AmbientCT services are running and endpoints respond.
-Tests Docker containers, Orthanc REST API, DICOMweb, DICOM upload, and OHIF Viewer.
+Tests Docker containers, Orthanc REST API, DICOMweb, DICOM upload, and AmbientCT Viewer.
 
 Options:
   -h, --help      Show this help message
@@ -100,7 +100,7 @@ echo ""
 echo "Docker containers:"
 check "Orthanc container running" \
   bash -c "docker ps --filter 'name=ambientct-orthanc' --format '{{.Status}}' | grep -q 'Up'"
-check "OHIF Viewer container running" \
+check "AmbientCT Viewer container running" \
   bash -c "docker ps --filter 'name=ambientct-viewer' --format '{{.Status}}' | grep -q 'Up'"
 
 # Container health
@@ -149,17 +149,24 @@ else
   WARN=$((WARN + 1))
 fi
 
-# --- OHIF Viewer ---
+# --- AmbientCT Viewer ---
 echo ""
-echo "OHIF Viewer (${VIEWER_URL}):"
+echo "AmbientCT Viewer (${VIEWER_URL}):"
 check "GET / returns HTML" \
   bash -c "curl -sfL '${VIEWER_URL}' | grep -q 'html'"
 
 # --- DICOM Upload Test ---
 echo ""
 echo "DICOM upload test:"
-TEMP_DCM=$(mktemp /tmp/test-XXXX.dcm)
-python3 -c "
+SAMPLE_DCM="${PROJECT_DIR}/dicom-import/dental_cbct_dicom/slice_0000.dcm"
+TEMP_DCM=""
+TEST_DCM=""
+
+if [ -f "$SAMPLE_DCM" ]; then
+  TEST_DCM="$SAMPLE_DCM"
+elif command -v python3 > /dev/null 2>&1; then
+  TEMP_DCM=$(mktemp /tmp/test-XXXX.dcm)
+  python3 -c "
 import struct, sys
 # 128-byte preamble + DICM
 data = b'\x00' * 128 + b'DICM'
@@ -179,11 +186,15 @@ pn = b'SMOKETEST^AMBIENTCT '
 data += struct.pack('<HH', 0x0010, 0x0010) + b'PN' + struct.pack('<H', len(pn)) + pn
 sys.stdout.buffer.write(data)
 " > "$TEMP_DCM" 2>/dev/null || true
+  if [ -s "$TEMP_DCM" ]; then
+    TEST_DCM="$TEMP_DCM"
+  fi
+fi
 
-if [ -s "$TEMP_DCM" ]; then
+if [ -n "$TEST_DCM" ] && [ -s "$TEST_DCM" ]; then
   UPLOAD_RESULT=$(curl -sf -u "$AUTH" \
     -X POST "${ORTHANC_URL}/instances" \
-    --data-binary @"$TEMP_DCM" 2>&1) || UPLOAD_RESULT=""
+    --data-binary @"$TEST_DCM" 2>&1) || UPLOAD_RESULT=""
 
   if echo "$UPLOAD_RESULT" | grep -q '"Status"'; then
     echo "  [PASS] DICOM upload via REST API"
@@ -199,7 +210,10 @@ else
   echo "  [WARN] Could not create test DICOM (python3 not available)"
   WARN=$((WARN + 1))
 fi
-rm -f "$TEMP_DCM"
+
+if [ -n "$TEMP_DCM" ]; then
+  rm -f "$TEMP_DCM"
+fi
 
 # --- Volume Check ---
 echo ""

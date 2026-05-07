@@ -1,0 +1,52 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="640" viewBox="0 0 1200 640" fill="none">
+  <title>AmbientCT Logo Concept 03</title>
+  <desc>Minimal orbit monogram with AmbientCT wordmark.</desc>
+  <defs>
+    <linearGradient id="panel03" x1="0" y1="0" x2="1200" y2="640" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#F8FAFC"/>
+      <stop offset="1" stop-color="#F5F3FF"/>
+    </linearGradient>
+    <linearGradient id="orbit03" x1="130" y1="130" x2="360" y2="360" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#34D399"/>
+      <stop offset="1" stop-color="#8B5CF6"/>
+    </linearGradient>
+  </defs>
+
+  <rect x="20" y="20" width="1160" height="600" rx="40" fill="url(#panel03)"/>
+  <circle cx="240" cy="260" r="146" fill="#0B1020"/>
+  <path
+    d="M240 126
+       C166 126 112 183 112 260
+       C112 337 166 394 240 394
+       C281 394 317 378 343 350"
+    stroke="url(#orbit03)"
+    stroke-width="22"
+    stroke-linecap="round"
+  />
+  <path
+    d="M330 156
+       C351 183 364 218 364 260
+       C364 284 360 306 351 326"
+    stroke="#E9D5FF"
+    stroke-width="14"
+    stroke-linecap="round"
+    opacity="0.9"
+  />
+  <path d="M240 170V346" stroke="#F8FAFC" stroke-width="24" stroke-linecap="round"/>
+  <path d="M180 198H300" stroke="#F8FAFC" stroke-width="22" stroke-linecap="round"/>
+  <circle cx="330" cy="156" r="12" fill="#34D399"/>
+  <circle cx="350" cy="328" r="10" fill="#8B5CF6"/>
+
+  <text x="470" y="248" fill="#111827" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="122" font-weight="800" letter-spacing="-5">
+    Ambient<tspan fill="#7C3AED">CT</tspan>
+  </text>
+  <text x="472" y="320" fill="#6D28D9" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="34" font-weight="700" letter-spacing="3">
+    PRECISE . MEMORABLE . APP-ICON READY
+  </text>
+  <text x="472" y="376" fill="#4B5563" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="28" font-weight="500">
+    Ambientwork Open Source imaging platform
+  </text>
+
+  <rect x="472" y="420" width="210" height="12" rx="6" fill="#34D399" opacity="0.24"/>
+  <rect x="696" y="420" width="210" height="12" rx="6" fill="#8B5CF6" opacity="0.18"/>
+</svg>

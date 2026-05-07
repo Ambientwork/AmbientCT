@@ -98,17 +98,17 @@ Warten Sie ca. 30 Sekunden. Dann:
 
 | Dienst | URL | Zweck |
 |--------|-----|-------|
-| **OHIF Viewer** | http://localhost:3000 | Bilder ansehen — hier arbeiten Ihre Mitarbeiter |
+| **AmbientCT Viewer** | http://localhost:3000 | Bilder ansehen — hier arbeiten Ihre Mitarbeiter |
 | **Orthanc Admin** | http://localhost:8042 | Server-Verwaltung (nur für Admin) |
 
-Öffnen Sie http://localhost:3000 in Ihrem Browser. Sie sollten den OHIF Viewer sehen.
+Öffnen Sie http://localhost:3000 in Ihrem Browser. Sie sollten den AmbientCT Viewer sehen.
 
 ---
 
 ## Schritt 5: Erste Bilder importieren
 
 ### Per Drag & Drop (einfachste Methode)
-1. Öffnen Sie den OHIF Viewer (http://localhost:3000)
+1. Öffnen Sie den AmbientCT Viewer (http://localhost:3000)
 2. Ziehen Sie `.dcm`-Dateien oder einen ganzen DICOM-Ordner in das Browserfenster
 3. Die Bilder werden automatisch importiert und erscheinen in der Studienliste
 
@@ -143,10 +143,10 @@ Prüfen Sie, ob alles funktioniert:
 Erwartete Ausgabe:
 ```
 ✅ Orthanc container running
-✅ OHIF Viewer container running
+✅ AmbientCT Viewer container running
 ✅ Orthanc HTTP responding
 ✅ Orthanc DICOMweb endpoint
-✅ OHIF responding on port
+✅ AmbientCT responding on port
 ✅ DICOM upload via REST API
 🎉 All checks passed!
 ```

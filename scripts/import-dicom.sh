@@ -98,10 +98,15 @@ if [[ "$DRY_RUN" == "false" ]]; then
 fi
 
 # Find DICOM files
+FILES=()
 if [[ "$RECURSIVE" == "true" ]]; then
-  mapfile -t FILES < <(find "$IMPORT_DIR" -type f \( -iname '*.dcm' -o -iname '*.DCM' \) | sort)
+  while IFS= read -r file; do
+    FILES+=("$file")
+  done < <(find "$IMPORT_DIR" -type f \( -iname '*.dcm' -o -iname '*.DCM' \) | sort)
 else
-  mapfile -t FILES < <(find "$IMPORT_DIR" -maxdepth 1 -type f \( -iname '*.dcm' -o -iname '*.DCM' \) | sort)
+  while IFS= read -r file; do
+    FILES+=("$file")
+  done < <(find "$IMPORT_DIR" -maxdepth 1 -type f \( -iname '*.dcm' -o -iname '*.DCM' \) | sort)
 fi
 
 TOTAL=${#FILES[@]}
@@ -128,6 +133,37 @@ if [[ "$DRY_RUN" == "true" ]]; then
   exit 0
 fi
 
+# Orthanc can either reject duplicates as "AlreadyStored" or accept them as
+# successful overwrites when OverwriteInstances=true. Detect the current mode so
+# the CLI reports the import result honestly.
+OVERWRITE_MODE=$(curl -sf -u "$AUTH" "${ORTHANC_URL}/system" \
+  | python3 -c "import sys,json; print(str(json.load(sys.stdin).get('OverwriteInstances', '')).lower())" 2>/dev/null || echo "")
+
+if [[ -z "$OVERWRITE_MODE" && -f "$PROJECT_DIR/config/orthanc.json" ]]; then
+  OVERWRITE_MODE=$(python3 - "$PROJECT_DIR/config/orthanc.json" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+try:
+    config = json.loads(Path(sys.argv[1]).read_text())
+    print(str(config.get("OverwriteInstances", "")).lower())
+except Exception:
+    print("")
+PY
+)
+fi
+
+if [[ "$OVERWRITE_MODE" == "true" ]]; then
+  RESULT_LABEL_SUCCESS="upserted"
+  RESULT_SUMMARY_SUCCESS="Upserted"
+  RESULT_SUMMARY_SKIPPED_NOTE="(already stored without overwrite)"
+else
+  RESULT_LABEL_SUCCESS="OK"
+  RESULT_SUMMARY_SUCCESS="Imported"
+  RESULT_SUMMARY_SKIPPED_NOTE="(already stored)"
+fi
+
 # Import files
 IMPORTED=0
 FAILED=0
@@ -143,7 +179,7 @@ for f in "${FILES[@]}"; do
     --data-binary @"$f" 2>&1) || RESPONSE=""
 
   HTTP_CODE=$(echo "$RESPONSE" | tail -1)
-  BODY=$(echo "$RESPONSE" | head -n -1)
+  BODY=$(echo "$RESPONSE" | sed '$d')
 
   case "$HTTP_CODE" in
     200)
@@ -152,7 +188,7 @@ for f in "${FILES[@]}"; do
         echo "already stored"
         SKIPPED=$((SKIPPED + 1))
       else
-        echo "OK"
+        echo "$RESULT_LABEL_SUCCESS"
         IMPORTED=$((IMPORTED + 1))
       fi
       ;;
@@ -166,8 +202,8 @@ done
 echo ""
 echo "==============================="
 echo "  Import complete"
-echo "  Imported: $IMPORTED"
-echo "  Skipped:  $SKIPPED (already stored)"
+echo "  ${RESULT_SUMMARY_SUCCESS}: $IMPORTED"
+echo "  Skipped:  $SKIPPED ${RESULT_SUMMARY_SKIPPED_NOTE}"
 echo "  Failed:   $FAILED"
 echo "==============================="
 echo ""

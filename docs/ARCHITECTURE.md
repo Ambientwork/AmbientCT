@@ -3,7 +3,8 @@
 ## Überblick
 
 AmbientCT ist ein lokaler PACS-Server für Zahnarzt- und Arztpraxen.
-Orthanc speichert und verwaltet DICOM-Bilder, OHIF zeigt sie im Browser an.
+Orthanc speichert und verwaltet DICOM-Bilder, AmbientCT zeigt sie im Browser an.
+AmbientCT basiert im Viewer-Layer auf OHIF und Cornerstone3D.
 Alles läuft in Docker-Containern auf einem lokalen Rechner — keine Cloud.
 
 ## Stack
@@ -11,7 +12,7 @@ Alles läuft in Docker-Containern auf einem lokalen Rechner — keine Cloud.
 | Komponente | Image / Version | Rolle |
 |------------|----------------|-------|
 | **Orthanc** | `orthancteam/orthanc:latest` | PACS-Server: DICOM-Speicher, DICOMweb-API, DIMSE C-STORE |
-| **OHIF Viewer** | `ohif/app:v3.9.2` | Web-basierter DICOM-Viewer (React, Cornerstone3D, WebGL) |
+| **AmbientCT Viewer** | Custom build auf Basis von `ohif/app:v3.9.2` | Web-basierter DICOM-Viewer (React, Cornerstone3D, WebGL) |
 | **Nginx** | (Produktion) | Reverse Proxy, SSL-Terminierung |
 | **Docker Compose** | — | Container-Orchestrierung |
 
@@ -22,7 +23,7 @@ Alles läuft in Docker-Containern auf einem lokalen Rechner — keine Cloud.
 │                   Praxis-Netzwerk                   │
 │                                                     │
 │  ┌──────────┐        ┌──────────────────────────┐   │
-│  │  Browser  │───────▶│  OHIF Viewer :3000       │   │
+│  │  Browser  │───────▶│  AmbientCT Viewer :3000  │   │
 │  │  (Arzt)  │        │  React + Cornerstone3D   │   │
 │  └──────────┘        │  WebGL 3D-Rendering      │   │
 │                      └──────────┬───────────────┘   │
@@ -66,12 +67,12 @@ DICOM-Datei ──▶ Orthanc REST API (POST /instances)
 
 ### 2. Bild-Anzeige
 ```
-OHIF Viewer ──QIDO-RS──▶ Orthanc: "Welche Studien gibt es?"
+AmbientCT Viewer ──QIDO-RS──▶ Orthanc: "Welche Studien gibt es?"
                               │
                               ▼
                          Studienliste (JSON)
                               │
-OHIF Viewer ──WADO-RS──▶ Orthanc: "Gib mir Serie X"
+AmbientCT Viewer ──WADO-RS──▶ Orthanc: "Gib mir Serie X"
                               │
                               ▼
                          DICOM Pixel-Daten
@@ -89,7 +90,7 @@ CBCT-Scanner ──C-STORE──▶ Orthanc :4242
                               ▼
                          Empfängt DICOM-Dateien
                          Speichert automatisch
-                         Erscheint sofort in OHIF
+                         Erscheint sofort in AmbientCT
 ```
 
 ## Architektur-Entscheidungen
@@ -97,7 +98,7 @@ CBCT-Scanner ──C-STORE──▶ Orthanc :4242
 | Entscheidung | Wahl | Warum | Alternativen verworfen |
 |-------------|------|-------|----------------------|
 | **Datenbank** | SQLite | Eine Praxis = ein Server. Kein DBA nötig, kein Postgres-Setup. Backup = eine Datei. | PostgreSQL (zu komplex für Einzelpraxis) |
-| **OHIF-Datenquelle** | DICOMweb | Industriestandard, flexibel, kompatibel mit allen DICOM-Viewern | DICOM JSON (proprietär) |
+| **Viewer-Datenquelle** | DICOMweb | Industriestandard, flexibel, kompatibel mit allen DICOM-Viewern | DICOM JSON (proprietär) |
 | **Authentifizierung** | Orthanc Basic Auth | Ausreichend für LAN. Einfach zu konfigurieren. | Keycloak (Overkill für lokales Setup) |
 | **SSL** | Self-signed (optional) | Für LAN ausreichend. Let's Encrypt für externe Zugänge. | Immer SSL erzwingen (verhindert schnellen Start) |
 | **Container-Runtime** | Docker Compose | Einfachstes Deployment. Kein Kubernetes nötig. | K8s (Overkill), Native Install (nicht portabel) |
@@ -139,7 +140,7 @@ Zahnmedizinische Bildgebung (CBCT, DVT) braucht andere Fenstereinstellungen als 
 | Container | RAM | CPU | Begründung |
 |-----------|-----|-----|-----------|
 | Orthanc | 512 MB | 1.0 | DICOM-Parsing, Index-Operationen |
-| OHIF Viewer | 256 MB | 0.5 | Statische Dateien, Nginx-Auslieferung |
+| AmbientCT Viewer | 256 MB | 0.5 | Statische Dateien, Nginx-Auslieferung |
 
 > Das Rendering passiert im Browser (WebGL/GPU), nicht auf dem Server.
 > Server-Ressourcen sind primär für Speichern und Ausliefern.
@@ -155,8 +156,8 @@ Zahnmedizinische Bildgebung (CBCT, DVT) braucht andere Fenstereinstellungen als 
 └─────────────────────┘
 ```
 
-- Orthanc und OHIF kommunizieren über das interne Docker-Netzwerk `pacs-net`
-- OHIF startet erst, wenn Orthanc `healthy` ist (`depends_on: condition: service_healthy`)
+- Orthanc und AmbientCT kommunizieren über das interne Docker-Netzwerk `pacs-net`
+- AmbientCT startet erst, wenn Orthanc `healthy` ist (`depends_on: condition: service_healthy`)
 - Von außen erreichbar: Port 3000 (Viewer), Port 8042 (Orthanc-API), Port 4242 (DICOM)
 
 ## Sicherheit
@@ -174,7 +175,7 @@ Zahnmedizinische Bildgebung (CBCT, DVT) braucht andere Fenstereinstellungen als 
 | `docker-compose.yml` | Container-Definition, Ports, Volumes, Netzwerk |
 | `.env.example` | Vorlage für Umgebungsvariablen |
 | `config/orthanc.json` | Orthanc-Konfiguration (Ports, Plugins, DICOMweb) |
-| `config/ohif-config.js` | OHIF-Konfiguration (Datenquelle, Presets, Hotkeys) |
+| `config/ohif-config.js` | AmbientCT-Viewer-Konfiguration (Datenquelle, Presets, Hotkeys) |
 | `scripts/setup.sh` | Erstinstallation (Docker-Check, .env, Image-Pull) |
 | `scripts/backup.sh` | DICOM-Daten-Backup (Docker Volume → tar.gz) |
 | `scripts/smoke-test.sh` | Automatischer Funktionstest aller Komponenten |

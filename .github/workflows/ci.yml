@@ -31,6 +31,11 @@ jobs:
       - name: Validate Orthanc config JSON
         run: python3 -c "import json; json.load(open('config/orthanc.json'))"
 
+      - name: Run extension unit tests
+        run: |
+          npm test --workspace=@ambientwork/ohif-extension-dental-tools
+          npm test --workspace=@ambientwork/ohif-extension-dental-cpr
+
   smoke-test:
     name: Smoke Test (Docker Stack)
     runs-on: ubuntu-latest

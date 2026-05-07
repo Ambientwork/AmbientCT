@@ -19,7 +19,7 @@ window.config = {
       namespace: '@ohif/extension-default.dataSourcesModule.dicomweb',
       sourceName: 'orthanc-dicomweb',
       configuration: {
-        friendlyName: 'DentalPACS Orthanc',
+        friendlyName: 'AmbientCT PACS',
         name: 'orthanc',
         wadoUriRoot: '/pacs/wado',
         qidoRoot: '/pacs/dicom-web',

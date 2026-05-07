@@ -5,8 +5,9 @@ import DentalArchSplineTool from './tools/DentalArchSplineTool';
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import DentalFileManager from './viewports/DentalFileManager';
+import { getStudyViewerPath } from './utils/orthancClient';
 
-export { DentalArchSplineTool, ARCH_SPLINE_COMPLETED } from './tools/DentalArchSplineTool';
+export { default as DentalArchSplineTool, ARCH_SPLINE_COMPLETED } from './tools/DentalArchSplineTool';
 export { buildCenterline, buildCenterlinePoints } from './utils/buildCenterline';
 export { ARCH_CROSS_SECTION_POSITION } from './viewports/DentalCrossSectionViewport';
 
@@ -23,6 +24,7 @@ const extension = {
   version: '0.1.0',
 
   preRegistration({ servicesManager, extensionManager, configuration = {} }: any) {
+    document.title = 'AmbientCT';
     console.log('[DentalCPR] Extension v0.1.0 registered — world\'s first open-source OHIF dental panoramic CPR');
 
     // ── Inject DentalFileManager as a fullscreen portal ────────────────────
@@ -56,10 +58,10 @@ const extension = {
       if (visible) {
         reactRoot.render(
           React.createElement(DentalFileManager, {
-            onOpen: (studyInstanceUID: string) => {
-              portalRoot.style.display = 'none';
-              // Navigate to OHIF viewer with the study UID (route: /dentalCPR)
-              window.location.href = `/dentalCPR?StudyInstanceUIDs=${encodeURIComponent(studyInstanceUID)}`;
+            onOpen: (studyInstanceUID: string, study?: { studyInstanceUID: string; modality: string }) => {
+              window.location.href = getStudyViewerPath(
+                study ?? { studyInstanceUID, modality: 'CT' }
+              );
             },
           })
         );

@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from 'react';
-import { annotation, triggerAnnotationModified } from '@cornerstonejs/tools';
+import { annotation } from '@cornerstonejs/tools';
 import { eventTarget } from '@cornerstonejs/core';
 import { DENTAL_TOOTH_PICK_EVENT } from '../tools/ToothAnnotationTool';
 import { getAllTeeth } from '../utils/fdi';
@@ -42,8 +42,7 @@ export default function DentalToolsPanel({ servicesManager }) {
     ann.data.toothNumber = selectedTooth.fdi;
     ann.data.finding = finding;
     ann.data.text = `${selectedTooth.fdi}${suffix}`;
-
-    triggerAnnotationModified(ann, pending.element);
+    ann.invalidated = true;
     setPending(null);
   }, [pending, selectedTooth, finding]);
 

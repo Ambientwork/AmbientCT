@@ -9,6 +9,8 @@ interface Props {
   loading?: boolean;
   error?: string | null;
   onRetry?: () => void;
+  search: string;
+  onSearchChange: (value: string) => void;
 }
 
 const BADGE_COLORS: Record<string, string> = {
@@ -17,9 +19,16 @@ const BADGE_COLORS: Record<string, string> = {
   IO: Colors.badgeIO,
 };
 
-export default function StudyTable({ studies, onOpen, loading, error, onRetry }: Props) {
+export default function StudyTable({
+  studies,
+  onOpen,
+  loading,
+  error,
+  onRetry,
+  search,
+  onSearchChange,
+}: Props) {
   const [sort, setSort] = useState<{ col: keyof StudySummary; dir: 1 | -1 }>({ col: 'studyDate', dir: -1 });
-  const [search, setSearch] = useState('');
 
   if (loading) return <Centered><Spinner /></Centered>;
   if (error) return (
@@ -56,7 +65,7 @@ export default function StudyTable({ studies, onOpen, loading, error, onRetry }:
         <input
           type="text"
           value={search}
-          onChange={e => setSearch(e.target.value)}
+          onChange={e => onSearchChange(e.target.value)}
           placeholder="Patient, Datum, Modalität…"
           style={{
             flex: 1, background: '#1a1a20', border: Border, borderRadius: Radius.md,

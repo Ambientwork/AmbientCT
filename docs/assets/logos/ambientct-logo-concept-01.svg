@@ -1,0 +1,62 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="640" viewBox="0 0 1200 640" fill="none">
+  <title>AmbientCT Logo Concept 01</title>
+  <desc>Rounded-square tooth scan mark with AmbientCT wordmark.</desc>
+  <defs>
+    <linearGradient id="panel01" x1="0" y1="0" x2="1200" y2="640" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#F8FAFC"/>
+      <stop offset="1" stop-color="#EEF2FF"/>
+    </linearGradient>
+    <linearGradient id="icon01" x1="110" y1="80" x2="370" y2="360" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#1A1B24"/>
+      <stop offset="1" stop-color="#09090F"/>
+    </linearGradient>
+    <linearGradient id="ring01" x1="140" y1="120" x2="330" y2="320" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#C4B5FD"/>
+      <stop offset="1" stop-color="#8B5CF6"/>
+    </linearGradient>
+  </defs>
+
+  <rect x="20" y="20" width="1160" height="600" rx="40" fill="url(#panel01)"/>
+  <rect x="80" y="100" width="320" height="320" rx="96" fill="url(#icon01)"/>
+  <circle cx="240" cy="260" r="106" stroke="url(#ring01)" stroke-width="18"/>
+  <circle cx="240" cy="260" r="62" stroke="#DDD6FE" stroke-width="8" stroke-dasharray="10 12" opacity="0.85"/>
+
+  <path
+    d="M240 148
+       C193 148 156 186 156 238
+       C156 276 173 305 187 331
+       C198 352 202 380 214 403
+       C220 415 230 424 240 424
+       C250 424 260 415 266 403
+       C278 380 282 352 293 331
+       C307 305 324 276 324 238
+       C324 186 287 148 240 148
+       C262 148 280 166 280 190
+       C280 210 266 228 252 244
+       L264 315
+       L240 292
+       L216 315
+       L228 244
+       C214 228 200 210 200 190
+       C200 166 218 148 240 148Z"
+    fill="#F8FAFC"
+  />
+
+  <path d="M320 173H354" stroke="#A78BFA" stroke-width="10" stroke-linecap="round"/>
+  <path d="M337 156V190" stroke="#A78BFA" stroke-width="10" stroke-linecap="round"/>
+  <path d="M126 332H154" stroke="#DDD6FE" stroke-width="8" stroke-linecap="round" opacity="0.9"/>
+  <path d="M140 318V346" stroke="#DDD6FE" stroke-width="8" stroke-linecap="round" opacity="0.9"/>
+
+  <text x="470" y="250" fill="#0F172A" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="126" font-weight="800" letter-spacing="-5">
+    Ambient<tspan fill="#8B5CF6">CT</tspan>
+  </text>
+  <text x="472" y="320" fill="#475569" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="34" font-weight="600" letter-spacing="2">
+    OPEN SOURCE DENTAL IMAGING
+  </text>
+  <text x="472" y="376" fill="#64748B" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="28" font-weight="500">
+    by Ambientwork
+  </text>
+
+  <rect x="472" y="418" width="260" height="14" rx="7" fill="#8B5CF6" opacity="0.18"/>
+  <rect x="748" y="418" width="110" height="14" rx="7" fill="#0F172A" opacity="0.08"/>
+</svg>

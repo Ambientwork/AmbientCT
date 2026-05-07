@@ -6,7 +6,10 @@
 *.DICOM
 DICOMDIR
 dicom-samples/
+dicom-import/
 tests/dicom-test-data/
+*dicom*.zip
+*DICOM*.zip
 
 # === Environment & Secrets ===
 .env
@@ -36,6 +39,13 @@ build/
 # === Logs ===
 *.log
 logs/
+
+# === Test Artifacts ===
+test-results/
+playwright-report/
+
+# === Tooling Caches ===
+.superpowers/
 
 # === Extension Build Artifacts ===
 extensions/dental-tools/node_modules/

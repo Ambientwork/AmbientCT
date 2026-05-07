@@ -158,9 +158,6 @@ export default class DentalArchSplineTool extends AnnotationTool {
       detail: { controlPoints: current.data.controlPoints },
     }));
 
-    if (typeof annotation.state.triggerAnnotationCompleted === 'function') {
-      annotation.state.triggerAnnotationCompleted(current as any);
-    }
   }
 
   /** Stub: prevents Cornerstone3D crash when user clicks an existing annotation handle. */
@@ -188,9 +185,6 @@ export default class DentalArchSplineTool extends AnnotationTool {
         current.data.controlPoints.push([...worldPos] as Types.Point3);
         current.data.handles.points.push([...worldPos] as Types.Point3);
         current.invalidated = true;
-        if (typeof annotation.state.triggerAnnotationModified === 'function') {
-          annotation.state.triggerAnnotationModified(current as any, element);
-        }
       }
       return current as any;
     }

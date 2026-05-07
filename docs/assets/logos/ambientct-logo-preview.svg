@@ -1,0 +1,76 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1220" viewBox="0 0 1600 1220" fill="none">
+  <title>AmbientCT Logo Preview Board</title>
+  <desc>Preview board showing three AmbientCT logo concepts.</desc>
+  <defs>
+    <linearGradient id="boardBg" x1="0" y1="0" x2="1600" y2="1220" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#09090F"/>
+      <stop offset="1" stop-color="#111827"/>
+    </linearGradient>
+    <linearGradient id="cardBg" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#FFFFFF"/>
+      <stop offset="1" stop-color="#F8FAFC"/>
+    </linearGradient>
+    <linearGradient id="violetMark" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#C4B5FD"/>
+      <stop offset="1" stop-color="#8B5CF6"/>
+    </linearGradient>
+    <linearGradient id="tealMark" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#7DD3FC"/>
+      <stop offset="1" stop-color="#14B8A6"/>
+    </linearGradient>
+    <linearGradient id="orbitMark" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#34D399"/>
+      <stop offset="1" stop-color="#8B5CF6"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="1600" height="1220" fill="url(#boardBg)"/>
+  <text x="88" y="104" fill="#F8FAFC" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="56" font-weight="800">
+    AmbientCT Logo Directions
+  </text>
+  <text x="88" y="152" fill="#CBD5E1" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="24">
+    Three SVG concepts for AmbientCT by Ambientwork. Concept 01 is the recommended default.
+  </text>
+
+  <g transform="translate(80 220)">
+    <rect width="1440" height="280" rx="32" fill="url(#cardBg)"/>
+    <rect x="34" y="34" width="212" height="212" rx="64" fill="#0F1020"/>
+    <circle cx="140" cy="140" r="72" stroke="url(#violetMark)" stroke-width="14"/>
+    <path d="M140 72C108 72 82 98 82 134C82 160 94 180 103 198C112 214 114 233 122 249C126 257 133 262 140 262C147 262 154 257 158 249C166 233 168 214 177 198C186 180 198 160 198 134C198 98 172 72 140 72C156 72 168 84 168 100C168 114 158 126 148 137L156 187L140 172L124 187L132 137C122 126 112 114 112 100C112 84 124 72 140 72Z" fill="#F8FAFC"/>
+    <text x="292" y="116" fill="#0F172A" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="68" font-weight="800">Concept 01</text>
+    <text x="292" y="170" fill="#8B5CF6" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="34" font-weight="700">Scan Tooth</text>
+    <text x="292" y="214" fill="#475569" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="26">
+      Strongest app icon. Reads immediately as dental imaging and scales well to favicon size.
+    </text>
+    <rect x="1188" y="52" width="176" height="42" rx="21" fill="#8B5CF6" opacity="0.14"/>
+    <text x="1227" y="80" fill="#6D28D9" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="22" font-weight="700">Recommended</text>
+  </g>
+
+  <g transform="translate(80 540)">
+    <rect width="1440" height="240" rx="32" fill="url(#cardBg)"/>
+    <rect x="34" y="26" width="212" height="188" rx="56" fill="#04111F"/>
+    <rect x="78" y="88" width="28" height="96" rx="14" fill="url(#tealMark)"/>
+    <rect x="126" y="72" width="28" height="128" rx="14" fill="#7DD3FC"/>
+    <rect x="174" y="88" width="28" height="96" rx="14" fill="url(#tealMark)"/>
+    <path d="M62 126C87 94 113 80 140 80C167 80 193 94 218 126" stroke="#F8FAFC" stroke-width="11" stroke-linecap="round"/>
+    <text x="292" y="100" fill="#082F49" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="58" font-weight="800">Concept 02</text>
+    <text x="292" y="148" fill="#0F766E" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="30" font-weight="700">Arch and Slices</text>
+    <text x="292" y="190" fill="#475569" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="24">
+      Most contemporary and product-like. Good if AmbientCT should feel more SaaS and less clinical.
+    </text>
+  </g>
+
+  <g transform="translate(80 820)">
+    <rect width="1440" height="240" rx="32" fill="url(#cardBg)"/>
+    <circle cx="140" cy="120" r="92" fill="#0B1020"/>
+    <path d="M140 42C93 42 58 78 58 120C58 162 93 198 140 198C166 198 190 188 208 172" stroke="url(#orbitMark)" stroke-width="16" stroke-linecap="round"/>
+    <path d="M140 66V174" stroke="#F8FAFC" stroke-width="16" stroke-linecap="round"/>
+    <path d="M102 84H178" stroke="#F8FAFC" stroke-width="16" stroke-linecap="round"/>
+    <circle cx="198" cy="58" r="8" fill="#34D399"/>
+    <text x="292" y="100" fill="#111827" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="58" font-weight="800">Concept 03</text>
+    <text x="292" y="148" fill="#6D28D9" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="30" font-weight="700">Orbit Monogram</text>
+    <text x="292" y="190" fill="#475569" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="24">
+      Minimal and memorable. Best for a tighter, more abstract corporate identity.
+    </text>
+  </g>
+</svg>

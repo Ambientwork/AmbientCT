@@ -32,6 +32,8 @@ COPY modes/dental-cpr-mode/   modes/dental-cpr-mode/
 COPY scripts/ohif/register-packages.js  /tmp/register-packages.js
 COPY scripts/ohif/register-plugins.js   /tmp/register-plugins.js
 COPY scripts/ohif/compile-extensions.js /tmp/compile-extensions.js
+COPY scripts/ohif/brand-dist.js         /tmp/brand-dist.js
+COPY config/branding/                   /tmp/branding/
 
 # Register extensions as workspace dependencies in platform/app/package.json
 RUN node /tmp/register-packages.js
@@ -48,6 +50,7 @@ RUN node /tmp/compile-extensions.js
 
 # Build OHIF (outputs to platform/app/dist)
 RUN yarn workspace @ohif/app run build
+RUN node /tmp/brand-dist.js /ohif/platform/app/dist /tmp/branding
 
 # ── Stage 2: Serve ────────────────────────────────────────────────────────────
 FROM nginx:alpine

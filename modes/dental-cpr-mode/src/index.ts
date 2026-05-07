@@ -1,10 +1,11 @@
 import { addTool, Enums as ToolEnums } from '@cornerstonejs/tools';
-import DentalArchSplineTool from '@ambientwork/ohif-extension-dental-cpr/src/tools/DentalArchSplineTool';
+import { DentalArchSplineTool } from '@ambientwork/ohif-extension-dental-cpr';
 
 const extensionDependencies = {
   '@ohif/extension-default': '^3.9.0',
   '@ohif/extension-cornerstone': '^3.9.0',
   '@ambientwork/ohif-extension-dental-cpr': '^0.1.0',
+  '@ambientwork/ohif-extension-dental-tools': '^1.0.0',
 };
 
 function modeFactory() {
@@ -30,7 +31,11 @@ function modeFactory() {
         layoutTemplate: ({ location, servicesManager }: any) => ({
           id: '@ohif/extension-default.layoutTemplateModule.viewerLayout',
           props: {
-            leftPanels: ['@ohif/extension-default.panelModule.seriesList'],
+            // The dental mode navigates directly by StudyInstanceUID query param
+            // and provides its own pre-study browser. OHIF's default series list
+            // expects the standard study route shape and can crash with
+            // "Invalid study URL" /notfoundstudy in this custom mode.
+            leftPanels: [],
             rightPanels: [
               '@ambientwork/ohif-extension-dental-tools.panelModule.dentalTools',
             ],

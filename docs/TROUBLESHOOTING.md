@@ -47,7 +47,7 @@ Danach: `docker compose down && docker compose up -d`
 
 ---
 
-## 3. OHIF Viewer zeigt leere Seite / lädt nicht
+## 3. AmbientCT Viewer zeigt leere Seite / lädt nicht
 
 **Symptom:** http://localhost:3000 zeigt weiße Seite oder Endlos-Ladebalken
 

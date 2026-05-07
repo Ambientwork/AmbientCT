@@ -10,7 +10,7 @@ AmbientCT ist ein **CBCT/DICOM-Bildbetrachter** für Zahnarztpraxen — vollstä
 
 | Komponente | Was es tut |
 |---|---|
-| **OHIF Viewer** | Zeigt Röntgenbilder und CBCT-Aufnahmen im Browser |
+| **AmbientCT Viewer** | Zeigt Röntgenbilder und CBCT-Aufnahmen im Browser |
 | **Orthanc** | Speichert und verwaltet alle Bilddaten (PACS) |
 | **Dental CPR** | Erstellt Panorama-Rekonstruktionen aus CBCT-Daten |
 
@@ -130,7 +130,7 @@ Mit dem **Slab-Regler** (1–20 mm) passen Sie die Projektionsdicke an:
 ## 6. Bilder exportieren
 
 ### Screenshot speichern
-Im OHIF Viewer: **Kamera-Symbol** in der Toolbar → Bild als PNG herunterladen.
+Im AmbientCT Viewer: **Kamera-Symbol** in der Toolbar → Bild als PNG herunterladen.
 
 ### DICOM exportieren (via Orthanc)
 1. Öffnen Sie http://localhost:8042
@@ -168,7 +168,7 @@ docker compose down
 
 **„Wie sehe ich Fehler-Logs?"**
 ```bash
-docker compose logs viewer   # OHIF Viewer Logs
+docker compose logs viewer   # AmbientCT Viewer Logs
 docker compose logs orthanc  # Orthanc Logs
 ```
 

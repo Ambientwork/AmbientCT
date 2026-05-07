@@ -27,7 +27,7 @@ Options:
   -u, --user NAME        Orthanc admin username (default: admin)
   --http-port PORT       Orthanc HTTP port (default: 8042)
   --dicom-port PORT      Orthanc DICOM port (default: 4242)
-  --viewer-port PORT     OHIF Viewer port (default: 3000)
+  --viewer-port PORT     AmbientCT Viewer port (default: 3000)
 
 Examples:
   ./scripts/setup.sh                        # Interactive wizard
@@ -170,7 +170,7 @@ if [[ "$INTERACTIVE" == "true" ]]; then
   prompt ORTHANC_USER "Orthanc admin username" "$ORTHANC_USER"
   prompt ORTHANC_HTTP_PORT "Orthanc HTTP port" "$ORTHANC_HTTP_PORT"
   prompt ORTHANC_DICOM_PORT "Orthanc DICOM port" "$ORTHANC_DICOM_PORT"
-  prompt VIEWER_PORT "OHIF Viewer port" "$VIEWER_PORT"
+  prompt VIEWER_PORT "AmbientCT Viewer port" "$VIEWER_PORT"
   echo ""
 fi
 
@@ -255,7 +255,7 @@ ORTHANC_USER=${ORTHANC_USER}
 ORTHANC_PASSWORD=${ORTHANC_PASSWORD}
 DICOM_AE_TITLE=DENTALPACS
 
-# === OHIF Viewer ===
+# === AmbientCT Viewer ===
 VIEWER_PORT=${VIEWER_PORT}
 
 # === CORS (restrict in production) ===
@@ -298,9 +298,9 @@ echo "==============================="
 echo ""
 echo "Next steps:"
 echo "  1. docker compose up -d"
-echo "  2. Open http://localhost:${VIEWER_PORT} (OHIF Viewer)"
+echo "  2. Open http://localhost:${VIEWER_PORT} (AmbientCT Viewer)"
 echo "  3. Open http://localhost:${ORTHANC_HTTP_PORT} (Orthanc Admin)"
-echo "  4. Upload DICOM files via drag & drop in OHIF"
+echo "  4. Upload DICOM files via drag & drop in AmbientCT"
 echo ""
 echo "Useful commands:"
 echo "  ./scripts/smoke-test.sh       Verify everything works"
@@ -314,7 +314,7 @@ echo "==============================="
 echo ""
 echo "  - All ports are bound to 127.0.0.1 (localhost only)."
 echo "  - For production: enable Nginx with HTTPS (see docker-compose.yml)."
-echo "  - NEVER expose Orthanc or OHIF directly to the internet without SSL."
+echo "  - NEVER expose Orthanc or AmbientCT directly to the internet without SSL."
 echo "  - Containers run read-only with no-new-privileges."
 echo "  - Change ORTHANC_PASSWORD immediately if using the generated default."
 echo ""

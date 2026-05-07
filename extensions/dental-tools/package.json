@@ -3,6 +3,9 @@
   "version": "1.0.0",
   "description": "Dental measurement tools for AmbientCT: nerve canal, tooth annotation, bone thickness",
   "main": "src/index.jsx",
+  "scripts": {
+    "test": "jest --runInBand"
+  },
   "peerDependencies": {
     "@ohif/core": "^3.9.0",
     "@cornerstonejs/core": "^2.0.0",

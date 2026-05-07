@@ -1,28 +1,47 @@
 // extensions/dental-cpr/src/components/DicomImport.tsx
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Colors, Font, Border, Radius } from '../utils/designTokens';
-import { OrthancClient } from '../utils/orthancClient';
+import { OrthancClient, type UploadResult } from '../utils/orthancClient';
 
 interface Props {
   client: OrthancClient;
-  onImported: () => void;
+  onImported: (uploadedStudyUIDs: string[]) => void;
+  registerApi?: (api: DicomImportApi) => void;
 }
 
 type ImportStatus = 'idle' | 'uploading' | 'success' | 'error';
+type ImportableFiles = FileList | File[];
+interface ImportOptions {
+  notifyParent?: boolean;
+}
 
-export default function DicomImport({ client, onImported }: Props) {
+export interface DicomImportApi {
+  openPicker: () => void;
+  importFiles: (files: ImportableFiles | null, options?: ImportOptions) => Promise<string[]>;
+}
+
+export default function DicomImport({ client, onImported, registerApi }: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [status, setStatus] = useState<ImportStatus>('idle');
   const [message, setMessage] = useState('');
 
-  const handleFiles = async (files: FileList | null) => {
-    if (!files?.length) return;
+  const handleFiles = async (
+    files: ImportableFiles | null,
+    options: ImportOptions = {}
+  ): Promise<string[]> => {
+    const fileList = files ? Array.from(files) : [];
+    if (!fileList.length) return [];
+    const { notifyParent = true } = options;
     setStatus('uploading');
-    setMessage(`Lade ${files.length} Datei(en) hoch…`);
+    setMessage(`Lade ${fileList.length} Datei(en) hoch…`);
     let errors = 0;
-    for (const file of Array.from(files)) {
+    const uploadedStudyUIDs = new Set<string>();
+    for (const file of fileList) {
       try {
-        await client.uploadDicom(file);
+        const result: UploadResult = await client.uploadDicom(file);
+        if (result.studyInstanceUID) {
+          uploadedStudyUIDs.add(result.studyInstanceUID);
+        }
       } catch (e: any) {
         errors++;
         console.error('[DicomImport]', e);
@@ -30,14 +49,26 @@ export default function DicomImport({ client, onImported }: Props) {
     }
     if (errors === 0) {
       setStatus('success');
-      setMessage(`${files.length} Datei(en) erfolgreich importiert.`);
-      onImported();
+      setMessage(`${fileList.length} Datei(en) erfolgreich importiert.`);
+      if (notifyParent) {
+        onImported(Array.from(uploadedStudyUIDs));
+      }
       setTimeout(() => setStatus('idle'), 3000);
     } else {
       setStatus('error');
       setMessage(`${errors} Datei(en) konnten nicht importiert werden.`);
     }
+    return Array.from(uploadedStudyUIDs);
   };
+
+  useEffect(() => {
+    if (!registerApi) return;
+
+    registerApi({
+      openPicker: () => inputRef.current?.click(),
+      importFiles: handleFiles,
+    });
+  }, [registerApi]);
 
   return (
     <>
@@ -48,7 +79,10 @@ export default function DicomImport({ client, onImported }: Props) {
         accept=".dcm,.zip"
         multiple
         style={{ display: 'none' }}
-        onChange={e => handleFiles(e.target.files)}
+        onChange={e => {
+          void handleFiles(e.target.files);
+          e.target.value = '';
+        }}
       />
 
       {/* Toast */}

@@ -3,6 +3,9 @@
   "version": "0.1.0",
   "description": "World's first open-source OHIF extension for dental panoramic CPR reconstruction",
   "main": "src/index.ts",
+  "scripts": {
+    "test": "jest --runInBand"
+  },
   "peerDependencies": {
     "@ohif/core": "^3.9.0",
     "@cornerstonejs/core": "^2.0.0",
