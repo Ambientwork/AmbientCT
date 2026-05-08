@@ -138,6 +138,60 @@ services:
       start_period: 20s
 
   # ---------------------------------------------------------------------------
+  # ai-inference: FastAPI service for dental anatomy segmentation and finding
+  # suggestion (Phase 3a — mock mode; real DentalSegmentator model in Phase 3b).
+  #
+  # Design decision — no host port mapping:
+  #   The service is reachable ONLY from other containers on pacs-net.
+  #   Browser requests reach it exclusively via the viewer's nginx proxy:
+  #     browser → localhost:3000/api/ai/... → nginx → ai-inference:8000/api/ai/...
+  #   This keeps the inference container off the public network entirely.
+  #
+  # Design decision — viewer depends_on NOT updated:
+  #   nginx start must not block on ai-inference health. If ai-inference is
+  #   slow to start (model load) the viewer should still serve the SPA. The
+  #   nginx proxy_pass will return 502 until ai-inference is healthy, which is
+  #   acceptable; the viewer frontend handles this gracefully via its mock adapter.
+  # ---------------------------------------------------------------------------
+  ai-inference:
+    image: ambientct/ai-inference:latest
+    build:
+      context: ./ai-inference
+      dockerfile: Dockerfile
+    platform: linux/amd64
+    container_name: ambientct-ai-inference
+    restart: unless-stopped
+    mem_limit: ${AI_INFERENCE_MEM_LIMIT:-2g}
+    cpus: ${AI_INFERENCE_CPUS:-2.0}
+    environment:
+      AI_INFERENCE_PHASE: "3a-mock"
+      LOG_LEVEL: "${LOG_LEVEL:-INFO}"
+      # Phase 3b will add:
+      #   ORTHANC_URL: http://orthanc:8042
+      #   ORTHANC_USER / ORTHANC_PASSWORD
+      #   MODEL_PATH: /models/dental-segmentator
+    volumes:
+      - ./data/ai-models:/models:ro
+    # NO ports: mapping — service is reachable ONLY through the internal pacs-net.
+    # The viewer's nginx proxies /api/ai/ to ai-inference:8000.
+    networks:
+      - pacs-net
+    depends_on:
+      orthanc:
+        condition: service_healthy
+    logging:
+      driver: json-file
+      options:
+        max-size: "${LOG_MAX_SIZE:-10m}"
+        max-file: "${LOG_MAX_FILE:-3}"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request as r; r.urlopen('http://localhost:8000/api/ai/health', timeout=3)\" || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  # ---------------------------------------------------------------------------
   # viewer-stock: Pre-built OHIF image (no dental extensions).
   # Use for quick testing without a full build:
   #   docker compose up -d viewer-stock
