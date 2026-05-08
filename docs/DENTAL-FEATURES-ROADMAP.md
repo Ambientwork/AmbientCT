@@ -3,6 +3,8 @@
 > Research date: 2026-03-23
 > Basis: OHIF v3.9.2, Cornerstone3D latest, vtk.js, community issues
 
+> **AI Assist (research preview)** — Architektur, Pipeline-Stages, OSS↔Regulated-Boundary und phasierte Roadmap (0–3 / 3–6 / 6–12 Monate) sind in [`AI-ASSIST-ARCHITECTURE.md`](AI-ASSIST-ARCHITECTURE.md) dokumentiert. Foundation-Code liegt unter `extensions/dental-cpr/src/ai/`.
+
 ---
 
 ## Was OHIF + Cornerstone3D heute schon kann

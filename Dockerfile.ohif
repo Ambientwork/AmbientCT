@@ -48,6 +48,13 @@ RUN yarn install
 # Required because OHIF's webpack babel-loader does not transpile workspace packages.
 RUN node /tmp/compile-extensions.js
 
+# Bake AmbientCT's runtime config INTO the build. OHIF v3 inlines the chosen
+# config into index.html as `window.config = () => ({...})` at build time —
+# the volume-mounted /app-config.js at runtime is therefore a no-op. We
+# overwrite OHIF's default.js so the build bakes our Orthanc DICOMweb settings,
+# not the CloudFront demo-server settings.
+COPY config/ohif-config.js /ohif/platform/app/public/config/default.js
+
 # Build OHIF (outputs to platform/app/dist)
 RUN yarn workspace @ohif/app run build
 RUN node /tmp/brand-dist.js /ohif/platform/app/dist /tmp/branding
