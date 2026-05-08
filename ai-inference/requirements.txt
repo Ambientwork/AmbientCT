@@ -1,0 +1,10 @@
+# Phase 3a runtime dependencies — no torch/nnunetv2/opencv (those come in Phase 3b)
+fastapi==0.115.5
+uvicorn[standard]==0.32.1
+pydantic==2.10.3
+pydicom==3.0.1
+httpx==0.28.1
+python-multipart==0.0.20
+
+# Dev / test — install with: pip install -r requirements.txt -r requirements-dev.txt
+# (kept separate so the Docker image stays lean)

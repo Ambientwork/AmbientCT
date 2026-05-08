@@ -153,33 +153,283 @@ describe('InferenceClient (mock mode)', () => {
     expect(job).toBeUndefined();
   });
 
-  // ── HTTP mode ─────────────────────────────────────────────────────────────
+});
 
-  test('startAiAssistJob throws "HTTP backend not implemented yet" when baseUrl is set', async () => {
-    const client = new InferenceClient({ baseUrl: 'http://localhost:8001' });
-    await expect(client.startAiAssistJob('1.2.3')).rejects.toThrow(
-      'HTTP backend not implemented yet',
-    );
+// ── InferenceClient (HTTP mode) ───────────────────────────────────────────────
+
+describe('InferenceClient (HTTP mode)', () => {
+  const BASE_URL = 'http://localhost:8001';
+
+  // Shared fixture data
+  const mockJob = {
+    jobId: 'j1',
+    studyInstanceUID: '1.2.3',
+    status: 'queued',
+    progress: 0,
+    createdAt: '2026-01-01T00:00:00.000Z',
+    updatedAt: '2026-01-01T00:00:00.000Z',
+  };
+
+  const mockFinding = {
+    findingId: 'f1',
+    jobId: 'j1',
+    studyInstanceUID: '1.2.3',
+    findingClass: 'periapical_radiolucency',
+    confidence: 0.85,
+    uncertainty: 'low',
+    reviewerState: 'unreviewed',
+    source: {
+      modelId: 'dental-seg-v1',
+      modelVersion: '1.0.0',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      studyInstanceUID: '1.2.3',
+    },
+    isDemo: false,
+  };
+
+  const mockSegmentation = {
+    segmentationId: 's1',
+    jobId: 'j1',
+    studyInstanceUID: '1.2.3',
+    anatomyClass: 'mandible',
+    confidence: 0.92,
+    uncertainty: 'low',
+    source: {
+      modelId: 'dental-seg-v1',
+      modelVersion: '1.0.0',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      studyInstanceUID: '1.2.3',
+    },
+    isDemo: false,
+  };
+
+  let fetchMock: jest.Mock;
+
+  beforeEach(() => {
+    fetchMock = jest.fn();
+    global.fetch = fetchMock as unknown as typeof fetch;
+    localStorageMock.clear();
+    jest.clearAllMocks();
   });
 
-  test('getAiAssistJob throws when baseUrl is set', async () => {
-    const client = new InferenceClient({ baseUrl: 'http://localhost:8001' });
-    await expect(client.getAiAssistJob('1.2.3')).rejects.toThrow(
-      'HTTP backend not implemented yet',
-    );
+  // ── 1. startAiAssistJob ───────────────────────────────────────────────────
+
+  test('startAiAssistJob POSTs to correct URL with studyInstanceUID body and returns parsed AiJob', async () => {
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => mockJob,
+    });
+
+    const store = new FindingsStore();
+    const client = new InferenceClient({ baseUrl: BASE_URL }, store);
+    const job = await client.startAiAssistJob('1.2.3');
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('http://localhost:8001/api/ai/jobs');
+    expect(init.method).toBe('POST');
+    expect(init.headers).toEqual({ 'Content-Type': 'application/json' });
+    expect(JSON.parse(init.body as string)).toEqual({ studyInstanceUID: '1.2.3' });
+
+    expect(job.jobId).toBe('j1');
+    expect(job.status).toBe('queued');
+    expect(job.studyInstanceUID).toBe('1.2.3');
+
+    // Job must also be written to the store
+    expect(store.getJob('1.2.3')).toEqual(mockJob);
   });
 
-  test('getAiFindings throws when baseUrl is set', async () => {
-    const client = new InferenceClient({ baseUrl: 'http://localhost:8001' });
+  // ── 2. getAiAssistJob — 200 ───────────────────────────────────────────────
+
+  test('getAiAssistJob GETs /api/ai/jobs/:jobId and returns AiJob on 200', async () => {
+    // Seed store with a job so we have a jobId to look up
+    const store = new FindingsStore();
+    store.setJob(mockJob);
+
+    const updatedJob = { ...mockJob, status: 'running', progress: 0.4 };
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => updatedJob,
+    });
+
+    const client = new InferenceClient({ baseUrl: BASE_URL }, store);
+    const job = await client.getAiAssistJob('1.2.3');
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('http://localhost:8001/api/ai/jobs/j1');
+    expect(init.method).toBe('GET');
+
+    expect(job).toBeDefined();
+    expect(job!.status).toBe('running');
+    expect(job!.progress).toBe(0.4);
+  });
+
+  // ── 3. getAiAssistJob — 404 ───────────────────────────────────────────────
+
+  test('getAiAssistJob returns undefined on 404', async () => {
+    const store = new FindingsStore();
+    store.setJob(mockJob);
+
+    fetchMock.mockResolvedValueOnce({
+      ok: false,
+      status: 404,
+      text: async () => 'Not Found',
+    });
+
+    const client = new InferenceClient({ baseUrl: BASE_URL }, store);
+    const job = await client.getAiAssistJob('1.2.3');
+    expect(job).toBeUndefined();
+  });
+
+  // ── 3b. getAiAssistJob — no stored job ────────────────────────────────────
+
+  test('getAiAssistJob returns undefined when no job is stored (no fetch call made)', async () => {
+    const store = new FindingsStore();
+    const client = new InferenceClient({ baseUrl: BASE_URL }, store);
+    const job = await client.getAiAssistJob('1.2.3');
+    expect(job).toBeUndefined();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  // ── 4. getAiFindings — 200 ────────────────────────────────────────────────
+
+  test('getAiFindings GETs /api/ai/findings/:studyInstanceUID and returns findings array', async () => {
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({ findings: [mockFinding] }),
+    });
+
+    const store = new FindingsStore();
+    const client = new InferenceClient({ baseUrl: BASE_URL }, store);
+    const findings = await client.getAiFindings('1.2.3');
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('http://localhost:8001/api/ai/findings/1.2.3');
+    expect(init.method).toBe('GET');
+
+    expect(findings).toHaveLength(1);
+    expect(findings[0].findingId).toBe('f1');
+    expect(findings[0].findingClass).toBe('periapical_radiolucency');
+  });
+
+  // ── 5. getAiFindings — 404 ────────────────────────────────────────────────
+
+  test('getAiFindings returns empty array on 404', async () => {
+    fetchMock.mockResolvedValueOnce({
+      ok: false,
+      status: 404,
+      text: async () => 'Not Found',
+    });
+
+    const store = new FindingsStore();
+    const client = new InferenceClient({ baseUrl: BASE_URL }, store);
+    const findings = await client.getAiFindings('1.2.3');
+    expect(findings).toEqual([]);
+  });
+
+  // ── 6. getAiSegmentations ─────────────────────────────────────────────────
+
+  test('getAiSegmentations GETs /api/ai/segmentations/:studyInstanceUID and returns segmentations array', async () => {
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({ segmentations: [mockSegmentation] }),
+    });
+
+    const store = new FindingsStore();
+    const client = new InferenceClient({ baseUrl: BASE_URL }, store);
+    const segs = await client.getAiSegmentations('1.2.3');
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('http://localhost:8001/api/ai/segmentations/1.2.3');
+    expect(init.method).toBe('GET');
+
+    expect(segs).toHaveLength(1);
+    expect(segs[0].segmentationId).toBe('s1');
+    expect(segs[0].anatomyClass).toBe('mandible');
+  });
+
+  // ── 7. reviewFinding ──────────────────────────────────────────────────────
+
+  test('reviewFinding POSTs state to /api/ai/findings/:findingId/review and updates store', async () => {
+    // Pre-populate store so updateReview can find the finding
+    const store = new FindingsStore();
+    store.setFindings('1.2.3', [mockFinding as ReturnType<typeof store.getFindings>[number]]);
+
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({ findingId: 'f1', reviewerState: 'accepted' }),
+    });
+
+    const client = new InferenceClient({ baseUrl: BASE_URL }, store);
+    const updated = await client.reviewFinding('f1', 'accepted');
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('http://localhost:8001/api/ai/findings/f1/review');
+    expect(init.method).toBe('POST');
+    expect(JSON.parse(init.body as string)).toEqual({ state: 'accepted' });
+
+    expect(updated).toBeDefined();
+    expect(updated!.reviewerState).toBe('accepted');
+
+    // Store must also reflect the change
+    const stored = store.getFindings('1.2.3').find(f => f.findingId === 'f1');
+    expect(stored?.reviewerState).toBe('accepted');
+  });
+
+  // ── 8. Network error → descriptive throw ─────────────────────────────────
+
+  test('network error throws with descriptive message including method and path', async () => {
+    fetchMock.mockRejectedValueOnce(new Error('net::ERR_CONNECTION_REFUSED'));
+
+    const store = new FindingsStore();
+    const client = new InferenceClient({ baseUrl: BASE_URL }, store);
     await expect(client.getAiFindings('1.2.3')).rejects.toThrow(
-      'HTTP backend not implemented yet',
+      'AI inference network error on GET /api/ai/findings/1.2.3: net::ERR_CONNECTION_REFUSED',
     );
   });
 
-  test('reviewFinding throws when baseUrl is set', async () => {
-    const client = new InferenceClient({ baseUrl: 'http://localhost:8001' });
-    await expect(client.reviewFinding('f1', 'accepted')).rejects.toThrow(
-      'HTTP backend not implemented yet',
+  // ── 9. Trailing-slash normalization ──────────────────────────────────────
+
+  test('baseUrl with trailing slash produces no double slash in request URL', async () => {
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({ findings: [] }),
+    });
+
+    const store = new FindingsStore();
+    // Pass URL with trailing slash — should be stripped in constructor
+    const client = new InferenceClient({ baseUrl: 'http://localhost:8001/' }, store);
+    await client.getAiFindings('1.2.3');
+
+    const [url] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('http://localhost:8001/api/ai/findings/1.2.3');
+    // No double slash
+    expect(url).not.toContain('//api');
+  });
+
+  // ── 10. HTTP 500 → error thrown ───────────────────────────────────────────
+
+  test('HTTP 500 throws with status code, method and path in message', async () => {
+    fetchMock.mockResolvedValueOnce({
+      ok: false,
+      status: 500,
+      text: async () => 'Internal Server Error',
+    });
+
+    const store = new FindingsStore();
+    const client = new InferenceClient({ baseUrl: BASE_URL }, store);
+    await expect(client.startAiAssistJob('1.2.3')).rejects.toThrow(
+      'AI inference HTTP 500 on POST /api/ai/jobs',
     );
   });
 });
