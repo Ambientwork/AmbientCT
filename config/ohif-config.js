@@ -30,8 +30,16 @@ window.config = {
         enableStudyLazyLoad: true,
         supportsFuzzyMatching: false,
         supportsWildcard: true,
-        staticWado: true,
-        singlepart: 'bulkdata,video',
+        // staticWado is for OHIF's static-wado-server (pre-rendered metadata
+        // files served by a static file host). Orthanc's DICOMweb plugin is
+        // a DYNAMIC server — when staticWado=true, OHIF builds asset-style
+        // URLs that Orthanc never serves, leading to pending XHRs in the
+        // cornerstone calculate-suv image loader and a frozen renderer.
+        // For Orthanc DICOMweb, this MUST be false.
+        staticWado: false,
+        // Orthanc's DICOMweb plugin returns multipart/related for frame
+        // requests by default; OHIF handles that natively with singlepart=false.
+        singlepart: false,
         bulkDataURI: {
           enabled: true,
           relativeResolution: 'studies',
