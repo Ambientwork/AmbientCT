@@ -260,27 +260,19 @@ async def load_volume_from_orthanc(
         selected.modality,
     )
 
-    # ── Step 2: fetch per-instance metadata (DICOM JSON) ─────────────────────
-    metadata_list: list[dict[str, Any]] = await client.get_series_metadata(
+    # ── Step 2: enumerate SOP Instance UIDs via QIDO ─────────────────────────
+    # We use list_instances (lightweight QIDO) instead of fetching
+    # series-level metadata, since each instance's full DICOM with all tags
+    # is fetched individually via WADO-RS in step 3.
+    instance_summaries = await client.list_instances(
         study_instance_uid, series_uid
     )
-    if not metadata_list:
+    if not instance_summaries:
         raise VolumeLoadError(
-            f"Series {safe_series} returned empty metadata"
+            f"Series {safe_series} has no instances"
         )
 
-    # Collect SOP Instance UIDs from metadata (tag 00080018)
-    sop_uids: list[str] = []
-    for m in metadata_list:
-        sop_entry = m.get("00080018", {})
-        val = sop_entry.get("Value", [])
-        if val and isinstance(val[0], str):
-            sop_uids.append(val[0])
-
-    if not sop_uids:
-        raise VolumeLoadError(
-            f"No SOPInstanceUIDs found in series {safe_series} metadata"
-        )
+    sop_uids = [s.sop_instance_uid for s in instance_summaries]
 
     log.info(
         "Series %s: fetching %d instances",
@@ -288,7 +280,11 @@ async def load_volume_from_orthanc(
         len(sop_uids),
     )
 
-    # ── Step 3: fetch each instance frame and parse with pydicom ─────────────
+    # ── Step 3: fetch each FULL DICOM instance and parse with pydicom ────────
+    # WADO-RS instance retrieve returns a multipart/related body with the
+    # complete DICOM Part-10 file (headers + pixel data). pydicom.dcmread
+    # then exposes ImagePositionPatient, PixelSpacing, FrameOfReferenceUID,
+    # etc. directly on the Dataset.
     @dataclass
     class _Slice:
         z: float
@@ -299,13 +295,13 @@ async def load_volume_from_orthanc(
     seen_for_uids: set[str] = set()
 
     for sop_uid in sop_uids:
-        raw_frame = await client.fetch_instance_frames(
-            study_instance_uid, series_uid, sop_uid, [1]
+        raw_dicom = await client.fetch_instance_full(
+            study_instance_uid, series_uid, sop_uid
         )
-        frame_bytes = _multipart_to_bytes(raw_frame)
+        dicom_bytes = _multipart_to_bytes(raw_dicom)
 
         try:
-            ds = pydicom.dcmread(io.BytesIO(frame_bytes), force=True)
+            ds = pydicom.dcmread(io.BytesIO(dicom_bytes), force=True)
         except Exception as exc:  # noqa: BLE001
             raise VolumeLoadError(
                 f"pydicom failed to parse instance {_safe_uid(sop_uid)}: {exc}"

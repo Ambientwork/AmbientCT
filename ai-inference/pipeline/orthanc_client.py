@@ -264,7 +264,9 @@ class OrthancClient:
         WADO-RS: fetch one or more frames from a single instance.
 
         frame_numbers is 1-based (DICOM convention).
-        Returns the raw multipart/related response body.
+        Returns the raw multipart/related response body containing only
+        pixel-data bytes (no DICOM headers). For full DICOM with all tags,
+        use ``fetch_instance_full`` instead.
         """
         frames_path = ",".join(str(n) for n in frame_numbers)
         path = (
@@ -274,5 +276,31 @@ class OrthancClient:
         resp = await self._get(
             path,
             accept="multipart/related; type=application/octet-stream",
+        )
+        return resp.content
+
+    async def fetch_instance_full(
+        self,
+        study_uid: str,
+        series_uid: str,
+        instance_uid: str,
+    ) -> bytes:
+        """
+        WADO-RS: fetch the **full** DICOM Part-10 instance.
+
+        Unlike ``fetch_instance_frames`` (which returns only pixel bytes),
+        this returns the complete DICOM with all metadata tags
+        (ImagePositionPatient, PixelSpacing, FrameOfReferenceUID, …) plus
+        the pixel data. The response is multipart/related with a single
+        application/dicom part — pass the result to ``_multipart_to_bytes``
+        to get the bare DICOM bytes for ``pydicom.dcmread``.
+        """
+        path = (
+            f"/dicom-web/studies/{study_uid}/series/{series_uid}"
+            f"/instances/{instance_uid}"
+        )
+        resp = await self._get(
+            path,
+            accept="multipart/related; type=application/dicom",
         )
         return resp.content

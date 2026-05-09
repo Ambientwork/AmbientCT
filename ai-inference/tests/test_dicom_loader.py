@@ -34,7 +34,11 @@ from pipeline.dicom_loader import (
     VolumeLoadError,
     load_volume_from_orthanc,
 )
-from pipeline.orthanc_client import OrthancClient, SeriesSummary
+from pipeline.orthanc_client import (
+    InstanceSummary,
+    OrthancClient,
+    SeriesSummary,
+)
 from pipeline.quality_check import QualityReport, check_volume_quality
 
 STUDY_UID = "1.2.840.10008.5.1.4.1.1.2.loader.test"
@@ -114,11 +118,11 @@ def _make_fake_client(instances: list[tuple[str, bytes]]) -> OrthancClient:
     Return a mock OrthancClient that serves the given (sop_uid, dicom_bytes) list.
 
     get_series_for_study → one series with len(instances) instances
-    get_series_metadata  → minimal metadata list with SOPInstanceUIDs
-    fetch_instance_frames → multipart-wrapped DICOM bytes for each sop_uid
+    list_instances       → InstanceSummary list ordered by InstanceNumber
+    fetch_instance_full  → multipart-wrapped FULL DICOM bytes for each sop_uid
     """
     sop_uids = [sop for sop, _ in instances]
-    frames_by_uid = {sop: data for sop, data in instances}
+    dicoms_by_uid = {sop: data for sop, data in instances}
 
     async def fake_get_series(study_uid: str) -> list[SeriesSummary]:
         return [
@@ -131,26 +135,27 @@ def _make_fake_client(instances: list[tuple[str, bytes]]) -> OrthancClient:
             )
         ]
 
-    async def fake_get_metadata(study_uid: str, series_uid: str) -> list[dict[str, Any]]:
+    async def fake_list_instances(
+        study_uid: str, series_uid: str
+    ) -> list[InstanceSummary]:
         return [
-            {"00080018": {"vr": "UI", "Value": [sop]}}
-            for sop in sop_uids
+            InstanceSummary(sop_instance_uid=sop, instance_number=i + 1)
+            for i, sop in enumerate(sop_uids)
         ]
 
-    async def fake_fetch_frames(
+    async def fake_fetch_full(
         study_uid: str,
         series_uid: str,
         instance_uid: str,
-        frame_numbers: list[int],
     ) -> bytes:
-        raw = frames_by_uid[instance_uid]
+        raw = dicoms_by_uid[instance_uid]
         return _wrap_multipart(raw)
 
     client = object.__new__(OrthancClient)
     client._base = "http://test"
     client.get_series_for_study = fake_get_series
-    client.get_series_metadata = fake_get_metadata
-    client.fetch_instance_frames = fake_fetch_frames
+    client.list_instances = fake_list_instances
+    client.fetch_instance_full = fake_fetch_full
     client.aclose = AsyncMock()
     return client
 
