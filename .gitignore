@@ -51,3 +51,8 @@ playwright-report/
 extensions/dental-tools/node_modules/
 extensions/dental-tools/dist/
 .gstack/
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/

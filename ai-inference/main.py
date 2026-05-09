@@ -1,5 +1,5 @@
 """
-main.py — AmbientCT AI Inference Service  (FastAPI, Phase 3a)
+main.py — AmbientCT AI Inference Service  (FastAPI, Phase 3b-1)
 
 Endpoints:
   GET  /api/ai/health
@@ -9,11 +9,18 @@ Endpoints:
   GET  /api/ai/segmentations/{studyInstanceUID} → list segmentation metadata
   POST /api/ai/findings/{findingId}/review   → submit reviewer decision
 
-Phase 3a: all inference is mocked — no model loaded, no Orthanc connectivity.
-Phase 3b: real DentalSegmentator / nnU-Net integration follows.
+Phase 3b-1: real DICOM fetch from Orthanc + numpy volume reconstruction.
+  - Fetches actual CBCT series via DICOMweb WADO-RS
+  - Reconstructs 3D numpy volume in memory
+  - Logs volume shape / dtype / spacing PHI-free
+  - Mock findings / segmentations preserved (3b-2 replaces with nnU-Net)
+Phase 3b-2: real DentalSegmentator / nnU-Net inference on the loaded volume.
 
 Environment variables:
   CORS_ALLOWED_ORIGINS   comma-separated list (default: http://localhost:3000,http://viewer)
+  ORTHANC_URL            Orthanc base URL (default: http://orthanc:8042)
+  ORTHANC_USER           Orthanc username (default: admin)
+  ORTHANC_PASSWORD       Orthanc password (required in production)
 """
 
 from __future__ import annotations
@@ -29,7 +36,16 @@ from fastapi import BackgroundTasks, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, ConfigDict, Field
 
+from pipeline.dicom_loader import VolumeLoadError, load_volume_from_orthanc
+from pipeline.exceptions import AiInferenceError
 from pipeline.findings import build_mock_findings
+from pipeline.orthanc_client import (
+    OrthancAuthError,
+    OrthancClient,
+    OrthancNetworkError,
+    OrthancNotFound,
+)
+from pipeline.quality_check import check_volume_quality
 from pipeline.segmentation import run_mock_segmentation
 
 
@@ -77,9 +93,14 @@ _raw_origins = os.environ.get(
 )
 CORS_ORIGINS: list[str] = [o.strip() for o in _raw_origins.split(",") if o.strip()]
 
+# Orthanc connectivity — internal docker-net, not nginx-proxied
+ORTHANC_URL = os.environ.get("ORTHANC_URL", "http://orthanc:8042")
+ORTHANC_USER = os.environ.get("ORTHANC_USER", "admin")
+ORTHANC_PASSWORD = os.environ.get("ORTHANC_PASSWORD", "")
+
 MODEL_ID = "ambientct-mock-v0"
-MODEL_VERSION = "0.0.0-3a-mock"
-SERVICE_VERSION = "0.1.0"
+MODEL_VERSION = "0.0.0-3b-1"
+SERVICE_VERSION = "0.2.0"
 
 # ── App ───────────────────────────────────────────────────────────────────────
 
@@ -88,7 +109,8 @@ app = FastAPI(
     version=SERVICE_VERSION,
     description=(
         "Local AI inference service for AmbientCT. "
-        "Phase 3a: mock pipeline, no model loaded. "
+        "Phase 3b-1: real DICOM fetch + numpy volume reconstruction. "
+        "Mock findings preserved — nnU-Net inference in Phase 3b-2. "
         "Research preview — not for clinical diagnosis."
     ),
 )
@@ -228,99 +250,195 @@ class SegmentationsResponse(BaseModel):
 # ── Background pipeline task ───────────────────────────────────────────────────
 
 
-async def _run_mock_pipeline(job_id: str, study_instance_uid: str) -> None:
+async def _set_job_status(
+    job_id: str,
+    status: str,
+    progress: float,
+    error: Optional[str] = None,
+) -> None:
+    """Update job status + progress atomically under the store lock."""
+    async with _store_lock:
+        job = _jobs.get(job_id)
+        if job is None:
+            return
+        job.status = status
+        job.progress = progress
+        job.updated_at = _now_iso()
+        if error is not None:
+            job.error = error
+
+
+def _build_findings_and_segs(
+    study_instance_uid: str,
+    job_id: str,
+    source: "AiSourceMetadata",
+) -> tuple[list[AiFinding], list[AiSegmentationMask]]:
+    """Assemble AiFinding + AiSegmentationMask lists from mock generators."""
+    raw_findings = build_mock_findings(study_instance_uid, job_id, source)
+    raw_segs = run_mock_segmentation(study_instance_uid)
+
+    findings: list[AiFinding] = []
+    for rf in raw_findings:
+        m = rf.get("measurement")
+        findings.append(
+            AiFinding(
+                finding_id=rf["findingId"],
+                job_id=job_id,
+                study_instance_uid=study_instance_uid,
+                finding_class=rf["findingClass"],
+                anatomy_class=rf.get("anatomyClass"),
+                confidence=rf["confidence"],
+                uncertainty=rf["uncertainty"],
+                reviewer_state="unreviewed",
+                measurement=MeasurementPayload(**m) if m else None,
+                source=source,
+                is_demo=True,
+                description=rf.get("description"),
+            )
+        )
+
+    seg_list: list[AiSegmentationMask] = []
+    for rs in raw_segs:
+        seg_list.append(
+            AiSegmentationMask(
+                segmentation_id=f"seg-{rs['anatomyClass']}-{job_id[:8]}",
+                job_id=job_id,
+                study_instance_uid=study_instance_uid,
+                anatomy_class=rs["anatomyClass"],
+                confidence=rs["confidence"],
+                uncertainty=rs["uncertainty"],
+                source=source,
+                is_demo=True,
+            )
+        )
+
+    return findings, seg_list
+
+
+async def _run_pipeline(job_id: str, study_instance_uid: str) -> None:
     """
-    Simulates the AI pipeline lifecycle.
+    Real AI pipeline for Phase 3b-1.
 
-    queued → (2 s) → running → (2 s) → review_required
+    Stage 1  queued → running  (mark job + progress=0.1)
+    Stage 2  fetch DICOM from Orthanc + reconstruct numpy volume
+    Stage 3  quality check (informational, no rejection)
+    Stage 4  mock findings + segmentations  (unchanged from 3a; 3b-2 replaces)
+    Stage 5  running → review_required  (progress=1.0)
 
-    Populates mock findings and segmentations on completion.
+    On any typed pipeline error: job status → failed with sanitised error string.
+    PHI-safe: volume shape/dtype/spacing are logged, never patient metadata.
     """
     t0 = datetime.now(timezone.utc)
-    safe_uid = _safe_uid(study_instance_uid)
+    safe_study = _safe_uid(study_instance_uid)
 
-    # Transition: running
-    await asyncio.sleep(2)
-    async with _store_lock:
-        job = _jobs.get(job_id)
-        if job is None:
-            return
-        job.status = "running"
-        job.progress = 0.3
-        job.updated_at = _now_iso()
-    log.info("Job %s → running (study %s)", job_id[:8], safe_uid)
+    try:
+        # ── Stage 1: mark running ─────────────────────────────────────────────
+        await _set_job_status(job_id, "running", progress=0.1)
+        log.info("Job %s → running (study %s)", job_id[:8], safe_study)
 
-    # Transition: review_required + populate findings
-    await asyncio.sleep(2)
-    async with _store_lock:
-        job = _jobs.get(job_id)
-        if job is None:
-            return
+        # ── Stage 2: fetch from Orthanc ───────────────────────────────────────
+        async with OrthancClient(ORTHANC_URL, ORTHANC_USER, ORTHANC_PASSWORD) as client:
+            volume = await load_volume_from_orthanc(client, study_instance_uid)
 
+        await _set_job_status(job_id, "running", progress=0.5)
+
+        # ── Stage 3: quality check ────────────────────────────────────────────
+        report = check_volume_quality(volume)
+        log.info(
+            "Volume loaded: shape=%s dtype=%s spacing_mm=%s isotropic=%s "
+            "(job=%s study=%s)",
+            volume.pixel_array.shape,
+            volume.pixel_array.dtype,
+            volume.spacing_mm,
+            report.isotropic,
+            job_id[:8],
+            safe_study,
+        )
+        if report.warnings:
+            log.warning(
+                "Quality warnings for job %s: %d warning(s)",
+                job_id[:8],
+                len(report.warnings),
+            )
+
+        # ── Stage 4: mock findings (3b-2 replaces with nnU-Net inference) ─────
+        await _set_job_status(job_id, "running", progress=0.7)
         now_iso = _now_iso()
         source = AiSourceMetadata(
             model_id=MODEL_ID,
             model_version=MODEL_VERSION,
             created_at=now_iso,
             study_instance_uid=study_instance_uid,
+            series_instance_uid=volume.series_instance_uid,
+        )
+        findings, seg_list = _build_findings_and_segs(
+            study_instance_uid, job_id, source
         )
 
-        raw_findings = build_mock_findings(study_instance_uid, job_id, source)
-        raw_segs = run_mock_segmentation(study_instance_uid)
+        # ── Stage 5: store results + mark review_required ─────────────────────
+        async with _store_lock:
+            job = _jobs.get(job_id)
+            if job is None:
+                return
+            _findings[study_instance_uid] = findings
+            _segmentations[study_instance_uid] = seg_list
+            for f in findings:
+                _finding_index[f.finding_id] = study_instance_uid
+            job.status = "review_required"
+            job.progress = 1.0
+            job.updated_at = _now_iso()
 
-        findings: list[AiFinding] = []
-        for rf in raw_findings:
-            m = rf.get("measurement")
-            findings.append(
-                AiFinding(
-                    finding_id=rf["findingId"],
-                    job_id=job_id,
-                    study_instance_uid=study_instance_uid,
-                    finding_class=rf["findingClass"],
-                    anatomy_class=rf.get("anatomyClass"),
-                    confidence=rf["confidence"],
-                    uncertainty=rf["uncertainty"],
-                    reviewer_state="unreviewed",
-                    measurement=MeasurementPayload(**m) if m else None,
-                    source=source,
-                    is_demo=True,
-                    description=rf.get("description"),
-                )
-            )
+        elapsed = (datetime.now(timezone.utc) - t0).total_seconds()
+        log.info(
+            "Job %s → review_required (study %s, %.1fs, %d findings, %d segs)",
+            job_id[:8],
+            safe_study,
+            elapsed,
+            len(findings),
+            len(seg_list),
+        )
 
-        seg_list: list[AiSegmentationMask] = []
-        for rs in raw_segs:
-            seg_list.append(
-                AiSegmentationMask(
-                    segmentation_id=f"seg-{rs['anatomyClass']}-{job_id[:8]}",
-                    job_id=job_id,
-                    study_instance_uid=study_instance_uid,
-                    anatomy_class=rs["anatomyClass"],
-                    confidence=rs["confidence"],
-                    uncertainty=rs["uncertainty"],
-                    source=source,
-                    is_demo=True,
-                )
-            )
+    except OrthancNotFound:
+        log.error("Job %s failed: study %s not found in Orthanc", job_id[:8], safe_study)
+        await _set_job_status(
+            job_id, "failed", progress=0.0,
+            error="Study not found in Orthanc"
+        )
 
-        _findings[study_instance_uid] = findings
-        _segmentations[study_instance_uid] = seg_list
-        for f in findings:
-            _finding_index[f.finding_id] = study_instance_uid
+    except OrthancAuthError:
+        log.error("Job %s failed: Orthanc auth error", job_id[:8])
+        await _set_job_status(
+            job_id, "failed", progress=0.0,
+            error="Orthanc authentication failed — check ORTHANC_USER/ORTHANC_PASSWORD"
+        )
 
-        job.status = "review_required"
-        job.progress = 1.0
-        job.updated_at = now_iso
+    except OrthancNetworkError as exc:
+        log.error("Job %s failed: Orthanc network error: %s", job_id[:8], exc)
+        await _set_job_status(
+            job_id, "failed", progress=0.0,
+            error="Cannot reach Orthanc — check service health"
+        )
 
-    elapsed = (datetime.now(timezone.utc) - t0).total_seconds()
-    log.info(
-        "Job %s → review_required (study %s, %.1fs, %d findings, %d segs)",
-        job_id[:8],
-        safe_uid,
-        elapsed,
-        len(findings),
-        len(seg_list),
-    )
+    except VolumeLoadError as exc:
+        log.error("Job %s failed: volume load error: %s", job_id[:8], exc)
+        await _set_job_status(
+            job_id, "failed", progress=0.0,
+            error=f"Volume load failed: {type(exc).__name__}"
+        )
+
+    except AiInferenceError as exc:
+        log.error("Job %s failed: pipeline error: %s", job_id[:8], exc)
+        await _set_job_status(
+            job_id, "failed", progress=0.0,
+            error=f"Pipeline error: {type(exc).__name__}"
+        )
+
+    except Exception:
+        log.exception("Job %s: unexpected pipeline failure", job_id[:8])
+        await _set_job_status(
+            job_id, "failed", progress=0.0,
+            error="Internal error — see service logs"
+        )
 
 
 # ── Endpoints ──────────────────────────────────────────────────────────────────
@@ -328,11 +446,24 @@ async def _run_mock_pipeline(job_id: str, study_instance_uid: str) -> None:
 
 @app.get("/api/ai/health")
 async def health() -> dict:
+    """
+    Liveness + readiness check.
+
+    orthanc_reachable is non-blocking: a single /system probe with a short
+    timeout.  Failure here does NOT cause a 5xx — the health endpoint stays
+    green so nginx/docker healthcheck does not restart the service on Orthanc
+    downtime.  The pipeline itself will fail individual jobs with "failed".
+    """
+    async with OrthancClient(ORTHANC_URL, ORTHANC_USER, ORTHANC_PASSWORD) as c:
+        orthanc_ok = await c.check_reachable()
+
     return {
         "status": "ok",
         "version": SERVICE_VERSION,
         "model_loaded": False,
-        "phase": "3a-mock",
+        "phase": "3b-1",
+        "orthanc_reachable": orthanc_ok,
+        "orthanc_url": ORTHANC_URL,
     }
 
 
@@ -355,7 +486,7 @@ async def start_job(req: StartJobRequest, bg: BackgroundTasks) -> AiJob:
     async with _store_lock:
         _jobs[job_id] = job
 
-    bg.add_task(_run_mock_pipeline, job_id, req.study_instance_uid)
+    bg.add_task(_run_pipeline, job_id, req.study_instance_uid)
     log.info(
         "Job %s queued for study %s",
         job_id[:8],

@@ -161,14 +161,15 @@ services:
     platform: linux/amd64
     container_name: ambientct-ai-inference
     restart: unless-stopped
-    mem_limit: ${AI_INFERENCE_MEM_LIMIT:-2g}
+    mem_limit: ${AI_INFERENCE_MEM_LIMIT:-3g}
     cpus: ${AI_INFERENCE_CPUS:-2.0}
     environment:
-      AI_INFERENCE_PHASE: "3a-mock"
+      AI_INFERENCE_PHASE: "3b-1"
       LOG_LEVEL: "${LOG_LEVEL:-INFO}"
-      # Phase 3b will add:
-      #   ORTHANC_URL: http://orthanc:8042
-      #   ORTHANC_USER / ORTHANC_PASSWORD
+      ORTHANC_URL: "http://orthanc:8042"
+      ORTHANC_USER: "${ORTHANC_USER:-admin}"
+      ORTHANC_PASSWORD: "${ORTHANC_PASSWORD:?ORTHANC_PASSWORD must be set in .env}"
+      # Phase 3b-2 will add:
       #   MODEL_PATH: /models/dental-segmentator
     volumes:
       - ./data/ai-models:/models:ro
