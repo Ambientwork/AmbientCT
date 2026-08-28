@@ -5,10 +5,18 @@ import DentalCrossSectionViewport, {
   ARCH_CROSS_SECTION_POSITION,
   CROSS_SECTION_STEP,
 } from './DentalCrossSectionViewport';
+import DentalMPRViewport from './DentalMPRViewport';
+import DentalMPRDiffViewport from './DentalMPRDiffViewport';
 import type { CrossSectionEventDetail } from './DentalCrossSectionViewport';
 import { getSharedFrames } from '../utils/dentalState';
+import { deriveCompareLayout } from '../utils/compareLayout';
 import ViewerToolbar, { type MarStatus } from '../components/ViewerToolbar';
-import { OrthancClient } from '../utils/orthancClient';
+import {
+  findStoredMarSeriesResult,
+  getSeriesViewerPath,
+  OrthancClient,
+  saveStoredMarSeriesResult,
+} from '../utils/orthancClient';
 
 // MAR-Processor URL — separater Docker-Container (Port 8000).
 // Kann via window.__MAR_URL__ in ohif-config.js überschrieben werden.
@@ -35,19 +43,70 @@ const DENTAL_GRID_STYLE_ID = 'dental-grid-col-override';
 
 export default function DentalContainerViewport(props: any) {
   const { displaySets, servicesManager, extensionManager, commandsManager } = props;
-  const sharedProps = { displaySets, servicesManager, extensionManager, commandsManager };
+  const allDisplaySets = Array.isArray(displaySets) ? displaySets : [];
+
+  const urlParams = new URLSearchParams(window.location.search);
+  const initialSeriesUID = urlParams.get('initialSeriesInstanceUID') ?? undefined;
+  const marSourceSeriesUID = urlParams.get('marSourceSeriesInstanceUID') ?? undefined;
+  const marResultSeriesUID = urlParams.get('marResultSeriesInstanceUID') ?? undefined;
+  const initialLayoutMode: 'cpr' | 'mpr' = urlParams.get('layoutMode') === 'mpr' ? 'mpr' : 'cpr';
+
+  const selectedDisplaySet =
+    allDisplaySets.find(ds => {
+      const uid = ds?.SeriesInstanceUID ?? ds?.seriesInstanceUID ?? ds?.series?.SeriesInstanceUID;
+      return uid && uid === initialSeriesUID;
+    }) ??
+    allDisplaySets[0] ??
+    {};
+
+  const sharedProps = {
+    displaySets: selectedDisplaySet ? [selectedDisplaySet] : [],
+    servicesManager,
+    extensionManager,
+    commandsManager,
+  };
 
   const onClose = props.onClose ?? (() => { window.location.href = '/'; });
-  const ds = displaySets?.[0] ?? {};
+  const ds = selectedDisplaySet;
   const patientName: string = ds.PatientName ?? ds.patientName ?? 'Unbekannt';
   const modality: string    = ds.Modality    ?? ds.modality    ?? 'CT';
   const studyDate: string   = ds.StudyDate   ?? ds.studyDate   ?? '';
+  const studyUID: string    = ds.StudyInstanceUID ?? ds.studyInstanceUID ?? '';
+  const activeSeriesUID: string | undefined =
+    ds.SeriesInstanceUID ?? ds.seriesInstanceUID ?? ds.series?.SeriesInstanceUID;
+  const storedMarResult = activeSeriesUID ? findStoredMarSeriesResult(activeSeriesUID) : undefined;
+  const compareSourceSeriesUID = marSourceSeriesUID ?? storedMarResult?.sourceSeriesInstanceUID;
+  const compareResultSeriesUID = marResultSeriesUID ?? storedMarResult?.marSeriesInstanceUID;
+  const isInMarCompareMode = Boolean(marSourceSeriesUID && marResultSeriesUID);
+  const activeSeriesLabel =
+    activeSeriesUID && compareResultSeriesUID && activeSeriesUID === compareResultSeriesUID
+      ? 'mar'
+      : activeSeriesUID && compareSourceSeriesUID && activeSeriesUID === compareSourceSeriesUID
+        ? 'original'
+        : undefined;
+  const sourceDisplaySet =
+    compareSourceSeriesUID
+      ? allDisplaySets.find(ds => {
+          const uid = ds?.SeriesInstanceUID ?? ds?.seriesInstanceUID ?? ds?.series?.SeriesInstanceUID;
+          return uid && uid === compareSourceSeriesUID;
+        })
+      : undefined;
+  const resultDisplaySet =
+    compareResultSeriesUID
+      ? allDisplaySets.find(ds => {
+          const uid = ds?.SeriesInstanceUID ?? ds?.seriesInstanceUID ?? ds?.series?.SeriesInstanceUID;
+          return uid && uid === compareResultSeriesUID;
+        })
+      : undefined;
 
   // ── MAR-State ────────────────────────────────────────────────────────────────
+  const [layoutMode, setLayoutMode] = useState<'cpr' | 'mpr'>(initialLayoutMode);
   const [marStatus, setMarStatus]     = useState<MarStatus>('idle');
   const [marProgress, setMarProgress] = useState(0);
   const [marSeriesUid, setMarSeriesUid] = useState<string | undefined>();
   const marPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const { compareSplitReady } = deriveCompareLayout({ layoutMode, sourceDisplaySet, resultDisplaySet });
 
   const handleMarTrigger = useCallback(async () => {
     // Extrahiere SeriesInstanceUID aus dem ersten DisplaySet
@@ -82,6 +141,13 @@ export default function DentalContainerViewport(props: any) {
             setMarStatus('done');
             setMarProgress(100);
             setMarSeriesUid(status.mar_series_uid);
+            if (studyUID && seriesUID) {
+              saveStoredMarSeriesResult({
+                studyInstanceUID: studyUID,
+                sourceSeriesInstanceUID: seriesUID,
+                marSeriesInstanceUID: status.mar_series_uid,
+              });
+            }
           } else if (status.status === 'error') {
             clearInterval(marPollRef.current!);
             setMarStatus('error');
@@ -96,7 +162,60 @@ export default function DentalContainerViewport(props: any) {
       console.error('[MAR] Job-Start fehlgeschlagen:', e);
       setMarStatus('error');
     }
-  }, [ds]);
+  }, [ds, studyUID]);
+
+  const navigateToSeries = useCallback((seriesUIDs: string[], initialSeriesUID: string) => {
+    if (!studyUID) return;
+
+    const sourceSeriesUID = compareSourceSeriesUID ?? activeSeriesUID;
+    const resultSeriesUID = compareResultSeriesUID ?? marSeriesUid ?? initialSeriesUID;
+    const nextLayoutMode =
+      seriesUIDs.length > 1 && sourceSeriesUID && resultSeriesUID ? 'mpr' : layoutMode;
+
+    window.location.href = getSeriesViewerPath(
+      { studyInstanceUID: studyUID, modality },
+      seriesUIDs,
+      initialSeriesUID,
+      {
+        layoutMode: nextLayoutMode,
+        marSourceSeriesInstanceUID: sourceSeriesUID,
+        marResultSeriesInstanceUID: resultSeriesUID,
+      }
+    );
+  }, [activeSeriesUID, compareResultSeriesUID, compareSourceSeriesUID, layoutMode, marSeriesUid, modality, studyUID]);
+
+  const handleOpenMarSeries = useCallback(() => {
+    const sourceSeriesUID = compareSourceSeriesUID ?? activeSeriesUID;
+    const resultSeriesUID = compareResultSeriesUID ?? marSeriesUid;
+    if (!sourceSeriesUID || !resultSeriesUID) return;
+    navigateToSeries([resultSeriesUID], resultSeriesUID);
+  }, [activeSeriesUID, compareResultSeriesUID, compareSourceSeriesUID, marSeriesUid, navigateToSeries]);
+
+  const handleEnterMarCompare = useCallback(() => {
+    const sourceSeriesUID = compareSourceSeriesUID ?? activeSeriesUID;
+    const resultSeriesUID = compareResultSeriesUID ?? marSeriesUid;
+    if (!sourceSeriesUID || !resultSeriesUID) return;
+    navigateToSeries([sourceSeriesUID, resultSeriesUID], resultSeriesUID);
+  }, [activeSeriesUID, compareResultSeriesUID, compareSourceSeriesUID, marSeriesUid, navigateToSeries]);
+
+  const handleSwitchToOriginalSeries = useCallback(() => {
+    if (!compareSourceSeriesUID || !compareResultSeriesUID) return;
+    navigateToSeries([compareSourceSeriesUID, compareResultSeriesUID], compareSourceSeriesUID);
+  }, [compareResultSeriesUID, compareSourceSeriesUID, navigateToSeries]);
+
+  const handleSwitchToMarSeries = useCallback(() => {
+    if (!compareSourceSeriesUID || !compareResultSeriesUID) return;
+    navigateToSeries([compareSourceSeriesUID, compareResultSeriesUID], compareResultSeriesUID);
+  }, [compareResultSeriesUID, compareSourceSeriesUID, navigateToSeries]);
+
+  const showMarTrigger = !isInMarCompareMode || activeSeriesLabel !== 'mar';
+
+  const updateLayoutMode = useCallback((nextMode: 'cpr' | 'mpr') => {
+    setLayoutMode(nextMode);
+    const params = new URLSearchParams(window.location.search);
+    params.set('layoutMode', nextMode);
+    window.history.replaceState({}, '', `${window.location.pathname}?${params.toString()}`);
+  }, []);
 
   // Cleanup bei Unmount
   useEffect(() => {
@@ -220,26 +339,117 @@ export default function DentalContainerViewport(props: any) {
         patientName={patientName}
         modality={modality}
         studyDate={studyDate}
+        layoutMode={layoutMode}
+        onLayoutModeChange={updateLayoutMode}
         onClose={onClose}
         marStatus={marStatus}
         marProgress={marProgress}
-        marSeriesUid={marSeriesUid}
-        onMarTrigger={handleMarTrigger}
+        marSeriesUid={marSeriesUid ?? compareResultSeriesUID}
+        onMarTrigger={showMarTrigger ? handleMarTrigger : undefined}
+        onOpenMarSeries={(marSeriesUid ?? compareResultSeriesUID) ? handleOpenMarSeries : undefined}
+        onEnterMarCompare={(marSeriesUid ?? compareResultSeriesUID) ? handleEnterMarCompare : undefined}
+        onSwitchToOriginalSeries={isInMarCompareMode && !compareSplitReady ? handleSwitchToOriginalSeries : undefined}
+        onSwitchToMarSeries={isInMarCompareMode && !compareSplitReady ? handleSwitchToMarSeries : undefined}
+        activeSeriesLabel={activeSeriesLabel as 'original' | 'mar' | undefined}
       />
-      <div style={{ flex: '6', minHeight: 0, overflow: 'hidden' }}>
-        <DentalCPRViewport viewportId="dentalCPR" {...sharedProps} />
-      </div>
-      <div style={{ flex: '4', minHeight: 0, display: 'flex', gap: 2, overflow: 'hidden' }}>
-        <div style={{ flex: 1, minWidth: 0, overflow: 'hidden' }}>
-          <DentalCrossSectionViewport viewportId="xsect-L" position={-1} {...sharedProps} />
-        </div>
-        <div style={{ flex: 1, minWidth: 0, overflow: 'hidden' }}>
-          <DentalCrossSectionViewport viewportId="xsect-C" position={0} {...sharedProps} />
-        </div>
-        <div style={{ flex: 1, minWidth: 0, overflow: 'hidden' }}>
-          <DentalCrossSectionViewport viewportId="xsect-R" position={1} {...sharedProps} />
-        </div>
-      </div>
+      {layoutMode === 'mpr' ? (
+        compareSplitReady ? (
+          <div style={{ flex: 1, minHeight: 0, display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gridTemplateRows: '1fr 1fr', gap: 2, overflow: 'hidden' }}>
+            <div style={{ minWidth: 0, minHeight: 0, overflow: 'hidden' }}>
+              <DentalMPRViewport
+                viewportId="mpr-coronal-original"
+                orientation="coronal"
+                labelOverride="Original · Coronal"
+                accentColor="#38bdf8"
+                displaySets={[sourceDisplaySet]}
+                servicesManager={servicesManager}
+                extensionManager={extensionManager}
+                commandsManager={commandsManager}
+              />
+            </div>
+            <div style={{ minWidth: 0, minHeight: 0, overflow: 'hidden' }}>
+              <DentalMPRViewport
+                viewportId="mpr-coronal-mar"
+                orientation="coronal"
+                labelOverride="MAR · Coronal"
+                accentColor="#34d399"
+                displaySets={[resultDisplaySet]}
+                servicesManager={servicesManager}
+                extensionManager={extensionManager}
+                commandsManager={commandsManager}
+              />
+            </div>
+            <div style={{ minWidth: 0, minHeight: 0, overflow: 'hidden' }}>
+              <DentalMPRDiffViewport
+                viewportId="mpr-coronal-diff"
+                orientation="coronal"
+                labelOverride="Diff · Coronal"
+                primaryDisplaySets={[sourceDisplaySet]}
+                secondaryDisplaySets={[resultDisplaySet]}
+              />
+            </div>
+            <div style={{ minWidth: 0, minHeight: 0, overflow: 'hidden' }}>
+              <DentalMPRViewport
+                viewportId="mpr-sagittal-original"
+                orientation="sagittal"
+                labelOverride="Original · Sagittal"
+                accentColor="#38bdf8"
+                displaySets={[sourceDisplaySet]}
+                servicesManager={servicesManager}
+                extensionManager={extensionManager}
+                commandsManager={commandsManager}
+              />
+            </div>
+            <div style={{ minWidth: 0, minHeight: 0, overflow: 'hidden' }}>
+              <DentalMPRViewport
+                viewportId="mpr-sagittal-mar"
+                orientation="sagittal"
+                labelOverride="MAR · Sagittal"
+                accentColor="#34d399"
+                displaySets={[resultDisplaySet]}
+                servicesManager={servicesManager}
+                extensionManager={extensionManager}
+                commandsManager={commandsManager}
+              />
+            </div>
+            <div style={{ minWidth: 0, minHeight: 0, overflow: 'hidden' }}>
+              <DentalMPRDiffViewport
+                viewportId="mpr-sagittal-diff"
+                orientation="sagittal"
+                labelOverride="Diff · Sagittal"
+                primaryDisplaySets={[sourceDisplaySet]}
+                secondaryDisplaySets={[resultDisplaySet]}
+              />
+            </div>
+          </div>
+        ) : (
+          <div style={{ flex: 1, minHeight: 0, display: 'flex', gap: 2, overflow: 'hidden' }}>
+            <div style={{ flex: 1, minWidth: 0, overflow: 'hidden' }}>
+              <DentalMPRViewport viewportId="mpr-coronal" orientation="coronal" {...sharedProps} />
+            </div>
+            <div style={{ flex: 1, minWidth: 0, overflow: 'hidden' }}>
+              <DentalMPRViewport viewportId="mpr-sagittal" orientation="sagittal" {...sharedProps} />
+            </div>
+          </div>
+        )
+      ) : (
+        <>
+          <div style={{ flex: '6', minHeight: 0, overflow: 'hidden' }}>
+            <DentalCPRViewport viewportId="dentalCPR" {...sharedProps} />
+          </div>
+          <div style={{ flex: '4', minHeight: 0, display: 'flex', gap: 2, overflow: 'hidden' }}>
+            <div style={{ flex: 1, minWidth: 0, overflow: 'hidden' }}>
+              <DentalCrossSectionViewport viewportId="xsect-L" position={-1} {...sharedProps} />
+            </div>
+            <div style={{ flex: 1, minWidth: 0, overflow: 'hidden' }}>
+              <DentalCrossSectionViewport viewportId="xsect-C" position={0} {...sharedProps} />
+            </div>
+            <div style={{ flex: 1, minWidth: 0, overflow: 'hidden' }}>
+              <DentalCrossSectionViewport viewportId="xsect-R" position={1} {...sharedProps} />
+            </div>
+          </div>
+        </>
+      )}
     </div>
   );
 }

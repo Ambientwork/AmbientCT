@@ -37,16 +37,29 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, ConfigDict, Field
 
 from pipeline.dicom_loader import VolumeLoadError, load_volume_from_orthanc
-from pipeline.exceptions import AiInferenceError
+from pipeline.exceptions import (
+    AiInferenceError,
+    InferenceError,
+    MemoryBudgetExceeded,
+    ModelLoadError,
+)
 from pipeline.findings import build_mock_findings
+from pipeline.inference_mode import InferenceModeDecision, resolve_inference_mode
 from pipeline.orthanc_client import (
     OrthancAuthError,
     OrthancClient,
     OrthancNetworkError,
     OrthancNotFound,
+    StowRsRejected,
 )
+from pipeline.orthanc_writer import upload_segmentations
 from pipeline.quality_check import check_volume_quality
-from pipeline.segmentation import run_mock_segmentation
+from pipeline.seg_writer import write_dicom_seg
+from pipeline.segmentation import (
+    SegmentationResult,
+    run_mock_segmentation,
+    run_segmentation,
+)
 
 
 def _to_camel_uid(snake: str) -> str:
@@ -98,9 +111,34 @@ ORTHANC_URL = os.environ.get("ORTHANC_URL", "http://orthanc:8042")
 ORTHANC_USER = os.environ.get("ORTHANC_USER", "admin")
 ORTHANC_PASSWORD = os.environ.get("ORTHANC_PASSWORD", "")
 
-MODEL_ID = "ambientct-mock-v0"
-MODEL_VERSION = "0.0.0-3b-1"
-SERVICE_VERSION = "0.2.0"
+SERVICE_VERSION = "0.3.0"
+
+# ── AI inference config ──────────────────────────────────────────────────────
+# Phase 3b-2: real anatomy segmentation. Findings remain mock (anatomy
+# segmentation ≠ clinical finding detection — separate model + Phase later).
+#
+# The demo/real/unavailable decision itself is NOT resolved here at import
+# time — that was blocker #2 from the plan (health going stale, and a
+# demo-classified job dying with ModelLoadError deep in the pipeline
+# because run_segmentation() re-read the env independently). Instead
+# pipeline.inference_mode.resolve_inference_mode() is called fresh on every
+# health check and every job start; see _run_pipeline() and health() below.
+
+AI_INFERENCE_PATCH_SIZE = int(os.environ.get("AI_INFERENCE_PATCH_SIZE", "96"))
+AI_INFERENCE_MEMORY_BUDGET_MB = int(os.environ.get("AI_INFERENCE_MEMORY_BUDGET_MB", "6144"))
+
+
+def _persist_demo_seg_enabled() -> bool:
+    """Read AI_INFERENCE_PERSIST_DEMO_SEG fresh (default false).
+
+    Read per job-start rather than cached at import so tests can toggle it
+    with monkeypatch.setenv() within a single pytest session. Default false
+    means a demo (mock) segmentation result lives only in the API's
+    in-memory state and is never written to Orthanc via STOW-RS — see
+    plan §3.2 / §8 P1.3.
+    """
+    return os.environ.get("AI_INFERENCE_PERSIST_DEMO_SEG", "false").strip().lower() == "true"
+
 
 # ── App ───────────────────────────────────────────────────────────────────────
 
@@ -109,8 +147,9 @@ app = FastAPI(
     version=SERVICE_VERSION,
     description=(
         "Local AI inference service for AmbientCT. "
-        "Phase 3b-1: real DICOM fetch + numpy volume reconstruction. "
-        "Mock findings preserved — nnU-Net inference in Phase 3b-2. "
+        "Phase 3b-2: real anatomy segmentation (nnU-Net) → DICOM SEG → "
+        "STOW-RS upload to Orthanc. Findings remain mock pending a "
+        "future finding-detection model. "
         "Research preview — not for clinical diagnosis."
     ),
 )
@@ -317,12 +356,16 @@ def _build_findings_and_segs(
 
 async def _run_pipeline(job_id: str, study_instance_uid: str) -> None:
     """
-    Real AI pipeline for Phase 3b-1.
+    Real AI pipeline for Phase 3b-1/3b-2.
 
-    Stage 1  queued → running  (mark job + progress=0.1)
+    Stage 1  queued → running; resolve AI inference mode (fresh, plan P1.2)
+             mode=unavailable fails the job here — BEFORE any CBCT volume is
+             loaded from Orthanc — with a PHI-free reason code.
     Stage 2  fetch DICOM from Orthanc + reconstruct numpy volume
     Stage 3  quality check (informational, no rejection)
-    Stage 4  mock findings + segmentations  (unchanged from 3a; 3b-2 replaces)
+    Stage 4  anatomy segmentation (demo mock or real nnU-Net per resolved mode)
+    Stage 4b persist DICOM SEG — unconditional for real; for demo only when
+             AI_INFERENCE_PERSIST_DEMO_SEG=true (plan P1.3)
     Stage 5  running → review_required  (progress=1.0)
 
     On any typed pipeline error: job status → failed with sanitised error string.
@@ -332,11 +375,41 @@ async def _run_pipeline(job_id: str, study_instance_uid: str) -> None:
     safe_study = _safe_uid(study_instance_uid)
 
     try:
-        # ── Stage 1: mark running ─────────────────────────────────────────────
-        await _set_job_status(job_id, "running", progress=0.1)
+        # ── Stage 1: mark running + resolve inference mode ────────────────────
+        await _set_job_status(job_id, "running", progress=0.05)
         log.info("Job %s → running (study %s)", job_id[:8], safe_study)
 
+        mode_decision: InferenceModeDecision = resolve_inference_mode()
+        log.info(
+            "Job %s: inference mode=%s model_id=%s device=%s reason=%s",
+            job_id[:8],
+            mode_decision.mode,
+            mode_decision.model_id,
+            mode_decision.device,
+            mode_decision.reason,
+        )
+
+        if mode_decision.mode == "unavailable":
+            # Fail early, PHI-free, BEFORE touching Orthanc/the CBCT volume.
+            # A configured-but-missing/invalid model must never silently
+            # fall through to a mock-looking result (plan §3.1).
+            log.error(
+                "Job %s failed: AI inference unavailable (reason=%s)",
+                job_id[:8],
+                mode_decision.reason,
+            )
+            await _set_job_status(
+                job_id,
+                "failed",
+                progress=0.0,
+                error=f"AI inference unavailable: {mode_decision.reason}",
+            )
+            return
+
+        is_demo = mode_decision.mode == "demo"
+
         # ── Stage 2: fetch from Orthanc ───────────────────────────────────────
+        await _set_job_status(job_id, "running", progress=0.1)
         async with OrthancClient(ORTHANC_URL, ORTHANC_USER, ORTHANC_PASSWORD) as client:
             volume = await load_volume_from_orthanc(client, study_instance_uid)
 
@@ -361,18 +434,133 @@ async def _run_pipeline(job_id: str, study_instance_uid: str) -> None:
                 len(report.warnings),
             )
 
-        # ── Stage 4: mock findings (3b-2 replaces with nnU-Net inference) ─────
-        await _set_job_status(job_id, "running", progress=0.7)
+        # ── Stage 4: anatomy segmentation (Phase 3b-2) ────────────────────────
+        # mode=demo: mock predictor produces a synthetic canal mask.
+        # mode=real: nnU-Net runs on the loaded volume.
+        # (mode=unavailable already returned above — never reaches here.)
+        await _set_job_status(job_id, "running", progress=0.6)
+        log.info(
+            "Job %s: starting segmentation (model_id=%s, device=%s, demo=%s)",
+            job_id[:8], mode_decision.model_id, mode_decision.device, is_demo,
+        )
+
+        seg_result: SegmentationResult = await run_segmentation(
+            volume,
+            model_path=mode_decision.model_path,
+            device=mode_decision.device,
+            patch_size=AI_INFERENCE_PATCH_SIZE,
+            memory_budget_mb=AI_INFERENCE_MEMORY_BUDGET_MB,
+            demo=is_demo,
+        )
+        log.info(
+            "Job %s: segmentation complete (%.1fs, %d MB peak, device=%s, %d classes)",
+            job_id[:8],
+            seg_result.inference_seconds,
+            seg_result.peak_memory_mb,
+            seg_result.device,
+            len(seg_result.masks_by_class),
+        )
+
+        # ── Stage 4b: persist DICOM SEG (mode-dependent, plan §3.2 / P1.3) ────
+        # real         → always write + STOW-RS upload to Orthanc.
+        # demo         → only when AI_INFERENCE_PERSIST_DEMO_SEG=true (test
+        #                 stacks only). Default false: the demo result lives
+        #                 solely in the in-memory API state; no STOW call is
+        #                 made and no Orthanc SOP UID is fabricated for it.
+        await _set_job_status(job_id, "running", progress=0.85)
+
+        should_persist = (not is_demo) or _persist_demo_seg_enabled()
+
         now_iso = _now_iso()
         source = AiSourceMetadata(
-            model_id=MODEL_ID,
-            model_version=MODEL_VERSION,
+            model_id=mode_decision.model_id or "unknown",
+            model_version=mode_decision.model_version or "unknown",
             created_at=now_iso,
             study_instance_uid=study_instance_uid,
             series_instance_uid=volume.series_instance_uid,
         )
-        findings, seg_list = _build_findings_and_segs(
-            study_instance_uid, job_id, source
+
+        seg_list: list[AiSegmentationMask] = []
+
+        if should_persist:
+            written = write_dicom_seg(
+                source_volume=volume,
+                masks_by_class=seg_result.masks_by_class,
+                model_id=mode_decision.model_id or "unknown",
+                model_version=mode_decision.model_version or "unknown",
+                is_demo=is_demo,
+            )
+
+            async with OrthancClient(ORTHANC_URL, ORTHANC_USER, ORTHANC_PASSWORD) as up_client:
+                uploaded = await upload_segmentations(
+                    up_client, written, study_uid=study_instance_uid
+                )
+
+            n_uploaded = sum(1 for u in uploaded if u.success)
+            n_failed = len(uploaded) - n_uploaded
+            if n_failed:
+                log.warning(
+                    "Job %s: %d/%d SEG uploads failed", job_id[:8], n_failed, len(uploaded)
+                )
+
+            # Real (or explicitly persisted demo) anatomy segmentations — one
+            # per class that succeeded to upload. Findings stay mock for now —
+            # they require a separate finding-detection model (later phase).
+            for u in uploaded:
+                if not u.success:
+                    continue
+                confidence = float(seg_result.confidence_by_class.get(u.anatomy_class, 0.0))
+                uncertainty = "low" if confidence >= 0.85 else ("medium" if confidence >= 0.7 else "high")
+                seg_list.append(
+                    AiSegmentationMask(
+                        segmentation_id=u.sop_instance_uid,
+                        job_id=job_id,
+                        study_instance_uid=study_instance_uid,
+                        anatomy_class=u.anatomy_class,
+                        confidence=confidence,
+                        uncertainty=uncertainty,
+                        source=source,
+                        is_demo=is_demo,
+                    )
+                )
+        else:
+            log.info(
+                "Job %s: demo SEG persistence disabled — result stays in "
+                "API state only, no STOW-RS upload",
+                job_id[:8],
+            )
+            for anatomy_class, mask in seg_result.masks_by_class.items():
+                if not mask.any():
+                    continue
+                confidence = float(seg_result.confidence_by_class.get(anatomy_class, 0.0))
+                uncertainty = "low" if confidence >= 0.85 else ("medium" if confidence >= 0.7 else "high")
+                seg_list.append(
+                    AiSegmentationMask(
+                        # Deliberately NOT a DICOM UID — this result was never
+                        # written to or acknowledged by Orthanc, so it must
+                        # not look like one.
+                        segmentation_id=f"demo-inmemory-{job_id}-{anatomy_class}",
+                        job_id=job_id,
+                        study_instance_uid=study_instance_uid,
+                        anatomy_class=anatomy_class,
+                        confidence=confidence,
+                        uncertainty=uncertainty,
+                        source=source,
+                        is_demo=True,
+                    )
+                )
+
+        # Findings remain mock (clinical detection model is future work). Mark
+        # as demo regardless of segmentation mode so reviewers know.
+        mock_source = AiSourceMetadata(
+            model_id="ambientct-mock-v0",
+            model_version="findings-mock",
+            created_at=now_iso,
+            study_instance_uid=study_instance_uid,
+            series_instance_uid=volume.series_instance_uid,
+        )
+        findings, _ = _build_findings_and_segs(
+            study_instance_uid, job_id, mock_source
         )
 
         # ── Stage 5: store results + mark review_required ─────────────────────
@@ -426,6 +614,34 @@ async def _run_pipeline(job_id: str, study_instance_uid: str) -> None:
             error=f"Volume load failed: {type(exc).__name__}"
         )
 
+    except ModelLoadError as exc:
+        log.error("Job %s failed: model load error: %s", job_id[:8], exc)
+        await _set_job_status(
+            job_id, "failed", progress=0.0,
+            error="AI model could not be loaded — check AI_MODEL_PATH"
+        )
+
+    except MemoryBudgetExceeded as exc:
+        log.error("Job %s failed: memory budget exceeded: %s", job_id[:8], exc)
+        await _set_job_status(
+            job_id, "failed", progress=0.0,
+            error="Inference exceeded memory budget — reduce volume size or increase AI_INFERENCE_MEMORY_BUDGET_MB"
+        )
+
+    except StowRsRejected as exc:
+        log.error("Job %s failed: STOW-RS upload rejected: %s", job_id[:8], exc)
+        await _set_job_status(
+            job_id, "failed", progress=0.0,
+            error="Orthanc rejected segmentation upload"
+        )
+
+    except InferenceError as exc:
+        log.error("Job %s failed: inference error: %s", job_id[:8], exc)
+        await _set_job_status(
+            job_id, "failed", progress=0.0,
+            error=f"Inference failed: {type(exc).__name__}"
+        )
+
     except AiInferenceError as exc:
         log.error("Job %s failed: pipeline error: %s", job_id[:8], exc)
         await _set_job_status(
@@ -449,19 +665,35 @@ async def health() -> dict:
     """
     Liveness + readiness check.
 
-    orthanc_reachable is non-blocking: a single /system probe with a short
-    timeout.  Failure here does NOT cause a 5xx — the health endpoint stays
-    green so nginx/docker healthcheck does not restart the service on Orthanc
-    downtime.  The pipeline itself will fail individual jobs with "failed".
+    Docker/nginx liveness stays HTTP 200 as long as the service process
+    itself is up — orthanc_reachable and mode/reason are readiness signals
+    carried in the body, never a 5xx, so infra does not restart the service
+    on Orthanc downtime or a missing/invalid model. The pipeline fails
+    individual jobs (status="failed") instead.
+
+    mode/model_id/model_version/reason are resolved fresh on every call via
+    resolve_inference_mode() (plan P1.2) — no import-time caching, so a
+    model that appears on disk after the container started is reflected on
+    the very next health call without a restart.
+
+    orthanc_reachable is a single /system probe with a short timeout.
     """
+    mode_decision: InferenceModeDecision = resolve_inference_mode()
+
     async with OrthancClient(ORTHANC_URL, ORTHANC_USER, ORTHANC_PASSWORD) as c:
         orthanc_ok = await c.check_reachable()
 
     return {
         "status": "ok",
         "version": SERVICE_VERSION,
-        "model_loaded": False,
-        "phase": "3b-1",
+        "mode": mode_decision.mode,
+        "model_loaded": mode_decision.mode == "real",
+        "model_id": mode_decision.model_id,
+        "model_version": mode_decision.model_version,
+        "phase": "3b-2",
+        "demo_mode": mode_decision.is_demo,
+        "device": mode_decision.device,
+        "reason": mode_decision.reason,
         "orthanc_reachable": orthanc_ok,
         "orthanc_url": ORTHANC_URL,
     }

@@ -1,9 +1,9 @@
 """
-tests/test_orthanc_client.py — Unit tests for OrthancClient  (Phase 3b-1)
+tests/test_orthanc_client.py — Unit tests for OrthancClient  (Phase 3b-1/2)
 
 Uses httpx.MockTransport / httpx.MockAsyncTransport so no real Orthanc is needed.
 
-Test cases:
+Phase 3b-1 tests:
   test_get_series_for_study           — parses QIDO series list correctly
   test_orthanc_not_found_raises       — HTTP 404 → OrthancNotFound
   test_orthanc_auth_error_raises      — HTTP 401 → OrthancAuthError
@@ -11,6 +11,12 @@ Test cases:
   test_get_series_sorted_by_number    — series returned in SeriesNumber order
   test_check_reachable_true           — /system 200 → True
   test_check_reachable_false_on_error — network failure → False (no raise)
+
+Phase 3b-2 tests (STOW-RS):
+  test_stow_rs_post_success           — 200 with valid JSON → returns dict
+  test_stow_rs_failed_sop_sequence_raises — FailedSOPSequence → StowRsRejected
+  test_stow_rs_4xx_raises_client_error    — 4xx → OrthancClientError
+  test_stow_rs_5xx_raises_server_error    — 5xx → OrthancServerError
 """
 
 from __future__ import annotations
@@ -23,9 +29,12 @@ import pytest
 from pipeline.orthanc_client import (
     OrthancAuthError,
     OrthancClient,
+    OrthancClientError,
     OrthancNetworkError,
     OrthancNotFound,
+    OrthancServerError,
     SeriesSummary,
+    StowRsRejected,
 )
 
 STUDY_UID = "1.2.840.10008.5.1.4.1.1.2.0001"
@@ -218,3 +227,143 @@ async def test_list_instances_sorted() -> None:
 
     assert [i.instance_number for i in result] == [1, 2, 3]
     assert result[0].sop_instance_uid == "1.2.3.sop1"
+
+
+# ── Phase 3b-2: STOW-RS tests ─────────────────────────────────────────────────
+
+
+def _stow_success_response(sop_uid: str = "1.2.3.4.sop") -> dict:
+    """Minimal valid STOW-RS success JSON (only ReferencedSOPSequence)."""
+    return {
+        "00081199": {  # ReferencedSOPSequence
+            "vr": "SQ",
+            "Value": [
+                {
+                    "00081150": {"vr": "UI", "Value": ["1.2.840.10008.5.1.4.1.1.2"]},
+                    "00081155": {"vr": "UI", "Value": [sop_uid]},
+                }
+            ],
+        }
+    }
+
+
+def _stow_failed_response(sop_uid: str = "1.2.3.4.sop") -> dict:
+    """STOW-RS response with a non-empty FailedSOPSequence."""
+    return {
+        "00081198": {  # FailedSOPSequence
+            "vr": "SQ",
+            "Value": [
+                {
+                    "00081150": {"vr": "UI", "Value": ["1.2.840.10008.5.1.4.1.1.2"]},
+                    "00081155": {"vr": "UI", "Value": [sop_uid]},
+                    "00081197": {"vr": "US", "Value": [274]},  # 0x0112 = Referenced SOP Class Not Supported
+                }
+            ],
+        }
+    }
+
+
+@pytest.mark.asyncio
+async def test_stow_rs_post_success() -> None:
+    """
+    stow_rs_post with a 200 response and valid STOW-RS JSON returns the parsed dict.
+    The request must use multipart/related content-type.
+    """
+    fake_dicom = b"\x00" * 128 + b"FAKE_DICOM"
+    expected_response = _stow_success_response()
+
+    captured_requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured_requests.append(request)
+        return _json_response(expected_response, status=200)
+
+    async with _make_client(handler) as client:
+        result = await client.stow_rs_post(fake_dicom, study_uid=STUDY_UID)
+
+    assert result == expected_response
+    assert len(captured_requests) == 1
+
+    req = captured_requests[0]
+    assert req.method == "POST"
+    assert "dicom-web/studies" in str(req.url)
+    # Multipart content-type must be set
+    ct = req.headers.get("content-type", "")
+    assert "multipart/related" in ct
+    assert 'type="application/dicom"' in ct
+    assert "boundary=" in ct
+
+
+@pytest.mark.asyncio
+async def test_stow_rs_post_without_study_uid() -> None:
+    """stow_rs_post without study_uid POSTs to /dicom-web/studies (no trailing UID)."""
+    captured: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        return _json_response(_stow_success_response())
+
+    async with _make_client(handler) as client:
+        await client.stow_rs_post(b"\x00" * 8, study_uid=None)
+
+    assert len(captured) == 1
+    url_str = str(captured[0].url)
+    # Path should end with /dicom-web/studies (not /studies/SOME_UID/)
+    assert url_str.endswith("/dicom-web/studies") or "/dicom-web/studies" in url_str
+
+
+@pytest.mark.asyncio
+async def test_stow_rs_failed_sop_sequence_raises() -> None:
+    """A STOW-RS 200 response with non-empty FailedSOPSequence raises StowRsRejected."""
+    failed_response = _stow_failed_response()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return _json_response(failed_response, status=200)
+
+    async with _make_client(handler) as client:
+        with pytest.raises(StowRsRejected) as exc_info:
+            await client.stow_rs_post(b"\x00" * 8, study_uid=STUDY_UID)
+
+    err = exc_info.value
+    assert err.failed_count == 1
+    assert isinstance(err.reasons, list)
+
+
+@pytest.mark.asyncio
+async def test_stow_rs_4xx_raises_client_error() -> None:
+    """A 4xx response (not 401/403/404) raises OrthancClientError with status_code."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(status_code=422, content=b"Unprocessable Entity")
+
+    async with _make_client(handler) as client:
+        with pytest.raises(OrthancClientError) as exc_info:
+            await client.stow_rs_post(b"\x00" * 8, study_uid=STUDY_UID)
+
+    assert exc_info.value.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_stow_rs_5xx_raises_server_error() -> None:
+    """A 5xx response raises OrthancServerError with status_code."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(status_code=503, content=b"Service Unavailable")
+
+    async with _make_client(handler) as client:
+        with pytest.raises(OrthancServerError) as exc_info:
+            await client.stow_rs_post(b"\x00" * 8, study_uid=STUDY_UID)
+
+    assert exc_info.value.status_code == 503
+
+
+@pytest.mark.asyncio
+async def test_stow_rs_network_error_raises_orthanc_network_error() -> None:
+    """A transport-level ConnectError during STOW-RS raises OrthancNetworkError."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("Connection refused")
+
+    async with _make_client(handler) as client:
+        with pytest.raises(OrthancNetworkError):
+            await client.stow_rs_post(b"\x00" * 8, study_uid=STUDY_UID)

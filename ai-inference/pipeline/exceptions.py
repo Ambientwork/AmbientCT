@@ -11,7 +11,11 @@ Hierarchy:
   │   ├── OrthancNotFound
   │   ├── OrthancAuthError
   │   └── OrthancNetworkError
-  └── VolumeLoadError       (in pipeline/dicom_loader.py)
+  ├── VolumeLoadError       (in pipeline/dicom_loader.py)
+  └── InferenceError
+      ├── ModelLoadError
+      ├── MemoryBudgetExceeded
+      └── InferenceTimeoutError
 """
 
 from __future__ import annotations
@@ -19,3 +23,19 @@ from __future__ import annotations
 
 class AiInferenceError(Exception):
     """Base class for all AmbientCT AI Inference pipeline errors."""
+
+
+class InferenceError(AiInferenceError):
+    """Generic inference failure."""
+
+
+class ModelLoadError(InferenceError):
+    """Model file missing, corrupted, or incompatible."""
+
+
+class MemoryBudgetExceeded(InferenceError):
+    """Process RSS exceeded the configured budget during inference."""
+
+
+class InferenceTimeoutError(InferenceError):
+    """Inference did not complete within the watchdog timeout."""

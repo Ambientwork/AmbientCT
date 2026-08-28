@@ -1,25 +1,31 @@
 """
-pipeline/orthanc_client.py — Async DICOMweb client for Orthanc  (Phase 3b-1)
+pipeline/orthanc_client.py — Async DICOMweb client for Orthanc  (Phase 3b-1/2)
 
 Talks to Orthanc via the internal Docker network (http://orthanc:8042) using
 HTTP Basic auth.  No nginx proxy in this path — direct container-to-container.
 
 DICOMweb endpoints used:
-  QIDO  GET /dicom-web/studies/{study_uid}/series
-  WADO  GET /dicom-web/studies/{study_uid}/series/{series_uid}/metadata
-  WADO  GET /dicom-web/studies/{study_uid}/series/{series_uid}/instances/{instance_uid}/frames/{frame}
+  QIDO  GET  /dicom-web/studies/{study_uid}/series
+  WADO  GET  /dicom-web/studies/{study_uid}/series/{series_uid}/metadata
+  WADO  GET  /dicom-web/studies/{study_uid}/series/{series_uid}/instances/{instance_uid}/frames/{frame}
+  STOW  POST /dicom-web/studies/{study_uid}/   (Phase 3b-2, STOW-RS upload)
+        POST /dicom-web/studies                 (without study UID)
 
 Error hierarchy:
   AiInferenceError
   └── OrthancError
       ├── OrthancNotFound
       ├── OrthancAuthError
-      └── OrthancNetworkError
+      ├── OrthancNetworkError
+      ├── OrthancClientError   (4xx, Phase 3b-2)
+      ├── OrthancServerError   (5xx, Phase 3b-2)
+      └── StowRsRejected       (STOW-RS FailedSOPSequence non-empty, Phase 3b-2)
 """
 
 from __future__ import annotations
 
 import logging
+import os
 from dataclasses import dataclass
 from typing import Any
 
@@ -52,6 +58,38 @@ class OrthancAuthError(OrthancError):
 
 class OrthancNetworkError(OrthancError):
     """Raised on transport-level failures (connection refused, timeout, …)."""
+
+
+class OrthancClientError(OrthancError):
+    """Raised when Orthanc returns an unexpected 4xx (not 401/403/404)."""
+
+    def __init__(self, message: str, status_code: int) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+
+
+class OrthancServerError(OrthancError):
+    """Raised when Orthanc returns a 5xx response."""
+
+    def __init__(self, message: str, status_code: int) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+
+
+class StowRsRejected(OrthancError):
+    """
+    Raised when the STOW-RS response contains a non-empty FailedSOPSequence.
+
+    Orthanc accepted the request but rejected one or more instances.
+    """
+
+    def __init__(self, failed_count: int, reasons: list[str]) -> None:
+        reason_text = "; ".join(reasons) if reasons else "no details"
+        super().__init__(
+            f"STOW-RS rejected {failed_count} instance(s): {reason_text}"
+        )
+        self.failed_count = failed_count
+        self.reasons = reasons
 
 
 # ── Data classes ──────────────────────────────────────────────────────────────
@@ -304,3 +342,121 @@ class OrthancClient:
             accept="multipart/related; type=application/dicom",
         )
         return resp.content
+
+    async def stow_rs_post(
+        self,
+        dicom_bytes: bytes,
+        study_uid: str | None = None,
+    ) -> dict[str, Any]:
+        """
+        STOW-RS: POST a single DICOM Part-10 instance to Orthanc.
+
+        Encodes the payload as ``multipart/related; type="application/dicom"``
+        with a single part containing the raw DICOM bytes.
+
+        Endpoint
+        --------
+        With study_uid:    POST /dicom-web/studies/{study_uid}/
+        Without study_uid: POST /dicom-web/studies
+
+        Returns
+        -------
+        dict
+            Parsed JSON response body containing ReferencedSOPSequence and
+            FailedSOPSequence as returned by Orthanc.
+
+        Raises
+        ------
+        OrthancClientError
+            On 4xx responses (excluding 401/403/404 which raise their own types).
+        OrthancServerError
+            On 5xx responses.
+        OrthancNetworkError
+            On transport-level failures (connection refused, timeout).
+        StowRsRejected
+            When the response JSON contains a non-empty FailedSOPSequence,
+            meaning Orthanc accepted the HTTP request but rejected the instance.
+        """
+        if study_uid:
+            path = f"/dicom-web/studies/{study_uid}/"
+        else:
+            path = "/dicom-web/studies"
+
+        url = f"{self._base}/{path.lstrip('/')}"
+
+        # Build multipart/related body with a random hex boundary
+        boundary = os.urandom(16).hex()
+        content_type = (
+            f'multipart/related; type="application/dicom"; boundary={boundary}'
+        )
+
+        # Multipart body: preamble + one part + epilogue
+        body = (
+            f"--{boundary}\r\n"
+            f"Content-Type: application/dicom\r\n"
+            f"\r\n"
+        ).encode("ascii") + dicom_bytes + (
+            f"\r\n--{boundary}--\r\n"
+        ).encode("ascii")
+
+        log.debug(
+            "STOW-RS POST to %s (%d bytes payload)",
+            path,
+            len(body),
+        )
+
+        try:
+            resp = await self._client.post(
+                url,
+                content=body,
+                headers={
+                    "Content-Type": content_type,
+                    "Accept": "application/dicom+json",
+                },
+            )
+        except (httpx.ConnectError, httpx.TimeoutException, httpx.TransportError) as exc:
+            raise OrthancNetworkError(
+                f"Network error reaching Orthanc at {self._base}: {exc}"
+            ) from exc
+
+        # Map HTTP status codes to typed exceptions
+        if resp.status_code in (401, 403):
+            raise OrthancAuthError(
+                f"Orthanc auth failed (HTTP {resp.status_code}) for {path}"
+            )
+        if resp.status_code == 404:
+            raise OrthancNotFound(f"Orthanc returned 404 for STOW-RS {path}")
+        if 400 <= resp.status_code < 500:
+            raise OrthancClientError(
+                f"Orthanc returned HTTP {resp.status_code} for STOW-RS {path}: "
+                f"{resp.text[:200]}",
+                status_code=resp.status_code,
+            )
+        if resp.status_code >= 500:
+            raise OrthancServerError(
+                f"Orthanc server error HTTP {resp.status_code} for STOW-RS {path}: "
+                f"{resp.text[:200]}",
+                status_code=resp.status_code,
+            )
+
+        # Parse the STOW-RS response
+        try:
+            response_json: dict[str, Any] = resp.json()
+        except Exception:  # noqa: BLE001
+            # Some Orthanc versions return empty body on success
+            response_json = {}
+
+        # Check for partial failures in FailedSOPSequence
+        # DICOM tag 00081198 = FailedSOPSequence
+        failed_seq = response_json.get("00081198", {}).get("Value", [])
+        if failed_seq:
+            reasons: list[str] = []
+            for item in failed_seq:
+                # 00081197 = FailureReason (US), 00081150 = ReferencedSOPClassUID
+                reason_val = item.get("00081197", {}).get("Value", [])
+                reason_str = str(reason_val[0]) if reason_val else "unknown"
+                reasons.append(reason_str)
+            raise StowRsRejected(failed_count=len(failed_seq), reasons=reasons)
+
+        log.debug("STOW-RS success for %s", path)
+        return response_json

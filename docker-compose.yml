@@ -171,6 +171,12 @@ services:
       ORTHANC_PASSWORD: "${ORTHANC_PASSWORD:?ORTHANC_PASSWORD must be set in .env}"
       # Phase 3b-2 will add:
       #   MODEL_PATH: /models/dental-segmentator
+      AI_INFERENCE_DEMO_MODE: "${AI_INFERENCE_DEMO_MODE:-false}"
+      # Whether a demo (mock) segmentation result is persisted to Orthanc
+      # via STOW-RS. Default false: keep the main PACS instance free of
+      # synthetic data. docker-compose.test.yml overrides this to true for
+      # the isolated test stack only.
+      AI_INFERENCE_PERSIST_DEMO_SEG: "${AI_INFERENCE_PERSIST_DEMO_SEG:-false}"
     volumes:
       - ./data/ai-models:/models:ro
     # NO ports: mapping — service is reachable ONLY through the internal pacs-net.

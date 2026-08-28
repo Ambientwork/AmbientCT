@@ -23,6 +23,7 @@ import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 
 # Import app after path is established by pytest (cwd = ai-inference/)
+import main
 from main import app, _jobs, _findings, _segmentations, _finding_index
 from pipeline.dicom_loader import LoadedVolume, VolumeLoadError
 from pipeline.orthanc_client import OrthancNotFound
@@ -75,15 +76,38 @@ def clear_stores():
 @pytest.fixture(autouse=True)
 def mock_load_volume():
     """
-    Auto-patch load_volume_from_orthanc to return a fake LoadedVolume.
+    Auto-patch the heavy pipeline calls so tests don't hit real Orthanc / model.
 
-    This removes the Orthanc dependency from all pipeline tests in this module.
+      - load_volume_from_orthanc → returns a fake LoadedVolume
+      - upload_segmentations    → returns fake successful uploads (Phase 3b-2)
+
+    `run_segmentation` uses the built-in mock predictor when AI_MODEL_PATH is
+    unset (the default in tests), so it doesn't need separate patching.
+    `write_dicom_seg` runs in-process with synthetic masks — it's pure code.
+
     Individual tests can re-patch inside the test body to inject errors.
     """
+    from pipeline.orthanc_writer import UploadedSegmentation
+
+    async def _fake_upload(_client, written, study_uid):
+        return [
+            UploadedSegmentation(
+                anatomy_class=w.anatomy_class,
+                sop_instance_uid=w.sop_instance_uid,
+                series_instance_uid=w.series_instance_uid,
+                success=True,
+                error_message=None,
+            )
+            for w in written
+        ]
+
     with patch(
         "main.load_volume_from_orthanc",
         new_callable=AsyncMock,
         return_value=_fake_volume(),
+    ), patch(
+        "main.upload_segmentations",
+        side_effect=_fake_upload,
     ):
         yield
 
@@ -134,9 +158,11 @@ async def test_health(client: AsyncClient) -> None:
     assert r.status_code == 200
     body = r.json()
     assert body["status"] == "ok"
-    assert body["version"] == "0.2.0"
+    assert body["version"] == "0.3.0"
+    # Demo mode in tests (no AI_MODEL_PATH set), so model_loaded=False
     assert body["model_loaded"] is False
-    assert body["phase"] == "3b-1"
+    assert body["phase"] == "3b-2"
+    assert body["demo_mode"] is True
     assert "orthanc_reachable" in body
 
 
@@ -258,7 +284,12 @@ async def test_camel_case_json(client: AsyncClient) -> None:
 
 @pytest.mark.asyncio
 async def test_segmentations_populated_after_job(client: AsyncClient) -> None:
-    """After job completes, segmentations endpoint returns at least mandible and mandibular_canal."""
+    """After job completes, segmentations endpoint contains the canal class.
+
+    Phase 3b-2: the active inference target is mandibular canal (single-class).
+    Other anatomy classes (mandible, maxilla, etc.) come back when a multi-class
+    model is configured — out of scope for this test.
+    """
     r = await client.post(
         "/api/ai/jobs", json={"studyInstanceUID": STUDY_UID}
     )
@@ -269,8 +300,9 @@ async def test_segmentations_populated_after_job(client: AsyncClient) -> None:
     assert r.status_code == 200
     segs = r.json()["segmentations"]
     anatomy_classes = {s["anatomyClass"] for s in segs}
-    assert "mandible" in anatomy_classes
     assert "mandibular_canal" in anatomy_classes
+    # All segs from this job must be marked demo (mock predictor in tests)
+    assert all(s["isDemo"] for s in segs)
 
 
 @pytest.mark.asyncio
@@ -400,3 +432,168 @@ async def test_pipeline_loads_volume_with_correct_study_uid(client: AsyncClient)
         # study_instance_uid is the second positional arg (first is OrthancClient instance)
         positional_args = mock_load.call_args.args
         assert STUDY_UID in positional_args
+
+
+# ── Phase 3b-2 P1.2/P1.3 — inference mode + demo SEG persistence ──────────────
+#
+# tests/conftest.py's autouse fixture sets AI_INFERENCE_DEMO_MODE=true and
+# clears AI_MODEL_PATH / AI_INFERENCE_PERSIST_DEMO_SEG for every test in this
+# module unless a test overrides them locally via monkeypatch.
+
+
+@pytest.mark.asyncio
+async def test_health_reports_demo_mode_fields(client: AsyncClient) -> None:
+    """Health includes mode/reason alongside the legacy demo_mode/model_loaded
+    fields, resolved fresh via resolve_inference_mode() (plan P1.2)."""
+    with patch("main.OrthancClient") as mock_cls:
+        mock_instance = AsyncMock()
+        mock_instance.__aenter__ = AsyncMock(return_value=mock_instance)
+        mock_instance.__aexit__ = AsyncMock(return_value=None)
+        mock_instance.check_reachable = AsyncMock(return_value=False)
+        mock_cls.return_value = mock_instance
+
+        r = await client.get("/api/ai/health")
+
+    body = r.json()
+    assert r.status_code == 200
+    assert body["mode"] == "demo"
+    assert body["reason"] == "demo_mode_forced"
+    assert body["model_id"] == "ambientct-mock-v0"
+
+
+@pytest.mark.asyncio
+async def test_health_unavailable_stays_http_200(
+    client: AsyncClient, monkeypatch
+) -> None:
+    """demo=false + no model configured → mode=unavailable, but liveness
+    (HTTP 200) is unaffected — only the readiness fields in the body change
+    (plan P1.2: 'Docker-Liveness bleibt HTTP 200')."""
+    monkeypatch.setenv("AI_INFERENCE_DEMO_MODE", "false")
+    monkeypatch.delenv("AI_MODEL_PATH", raising=False)
+
+    with patch("main.OrthancClient") as mock_cls:
+        mock_instance = AsyncMock()
+        mock_instance.__aenter__ = AsyncMock(return_value=mock_instance)
+        mock_instance.__aexit__ = AsyncMock(return_value=None)
+        mock_instance.check_reachable = AsyncMock(return_value=False)
+        mock_cls.return_value = mock_instance
+
+        r = await client.get("/api/ai/health")
+
+    assert r.status_code == 200
+    body = r.json()
+    assert body["mode"] == "unavailable"
+    assert body["model_loaded"] is False
+    assert body["demo_mode"] is False
+    assert body["model_id"] is None
+    assert body["reason"] == "model_path_not_configured"
+
+
+@pytest.mark.asyncio
+async def test_health_mode_reflects_env_change_without_restart(
+    client: AsyncClient, monkeypatch
+) -> None:
+    """Mode is resolved fresh on every /api/ai/health call — flipping
+    AI_INFERENCE_DEMO_MODE between two calls in the same running process
+    must change the reported mode immediately, proving there is no
+    import-time caching / stale health (plan §8 addendum P1.2a)."""
+    monkeypatch.setenv("AI_INFERENCE_DEMO_MODE", "false")
+    monkeypatch.delenv("AI_MODEL_PATH", raising=False)
+
+    with patch("main.OrthancClient") as mock_cls:
+        mock_instance = AsyncMock()
+        mock_instance.__aenter__ = AsyncMock(return_value=mock_instance)
+        mock_instance.__aexit__ = AsyncMock(return_value=None)
+        mock_instance.check_reachable = AsyncMock(return_value=False)
+        mock_cls.return_value = mock_instance
+
+        r1 = await client.get("/api/ai/health")
+        assert r1.json()["mode"] == "unavailable"
+
+        monkeypatch.setenv("AI_INFERENCE_DEMO_MODE", "true")
+        r2 = await client.get("/api/ai/health")
+        assert r2.json()["mode"] == "demo"
+
+
+@pytest.mark.asyncio
+async def test_job_unavailable_mode_fails_before_loading_volume(
+    client: AsyncClient, monkeypatch
+) -> None:
+    """demo=false + no model configured: the job must fail immediately with
+    a PHI-free 'unavailable' error, WITHOUT ever calling
+    load_volume_from_orthanc — i.e. no CBCT volume is fetched for a job that
+    cannot possibly complete (plan P1.2, blocker: 'a job in unavailable
+    state would still load the full CBCT volume before failing')."""
+    monkeypatch.setenv("AI_INFERENCE_DEMO_MODE", "false")
+    monkeypatch.delenv("AI_MODEL_PATH", raising=False)
+
+    r = await client.post("/api/ai/jobs", json={"studyInstanceUID": STUDY_UID})
+    job_id = r.json()["jobId"]
+
+    final = await _wait_for_status(client, job_id, "failed", timeout_s=5.0)
+    assert final["status"] == "failed"
+    assert final["error"] is not None
+    assert "unavailable" in final["error"].lower()
+
+    # The autouse mock_load_volume fixture patches this name onto `main`;
+    # it must never have been invoked for an unavailable-mode job.
+    assert main.load_volume_from_orthanc.call_count == 0
+
+
+@pytest.mark.asyncio
+async def test_demo_without_persistence_skips_stow(client: AsyncClient) -> None:
+    """Default AI_INFERENCE_PERSIST_DEMO_SEG=false: a demo job's result
+    never goes through STOW-RS, and its segmentation id is deliberately NOT
+    a DICOM UID (no fake Orthanc SOP UID in the API state) — plan P1.3."""
+    r = await client.post("/api/ai/jobs", json={"studyInstanceUID": STUDY_UID})
+    job_id = r.json()["jobId"]
+    await _wait_for_status(client, job_id, "review_required", timeout_s=8.0)
+
+    assert main.upload_segmentations.call_count == 0
+
+    r = await client.get(f"/api/ai/segmentations/{STUDY_UID}")
+    segs = r.json()["segmentations"]
+    assert len(segs) > 0
+    for s in segs:
+        assert s["isDemo"] is True
+        assert s["segmentationId"].startswith("demo-inmemory-")
+
+
+@pytest.mark.asyncio
+async def test_demo_with_persistence_stows_and_marks_seg_as_demo(
+    client: AsyncClient, monkeypatch
+) -> None:
+    """AI_INFERENCE_PERSIST_DEMO_SEG=true: write_dicom_seg is called with
+    is_demo=True and the mock model id, and the (persisted) result is
+    uploaded via STOW-RS — plan P1.3."""
+    monkeypatch.setenv("AI_INFERENCE_PERSIST_DEMO_SEG", "true")
+
+    from pipeline.seg_writer import WrittenSegmentation
+
+    captured: dict = {}
+
+    def _fake_write_dicom_seg(**kwargs):
+        captured.update(kwargs)
+        return [
+            WrittenSegmentation(
+                anatomy_class="mandibular_canal",
+                sop_instance_uid="1.2.3.fake.sop",
+                series_instance_uid="1.2.3.fake.series",
+                dicom_bytes=b"\x00",
+            )
+        ]
+
+    with patch("main.write_dicom_seg", side_effect=_fake_write_dicom_seg):
+        r = await client.post("/api/ai/jobs", json={"studyInstanceUID": STUDY_UID})
+        job_id = r.json()["jobId"]
+        await _wait_for_status(client, job_id, "review_required", timeout_s=8.0)
+
+    assert captured.get("is_demo") is True
+    assert captured.get("model_id") == "ambientct-mock-v0"
+    assert main.upload_segmentations.call_count == 1
+
+    r = await client.get(f"/api/ai/segmentations/{STUDY_UID}")
+    segs = r.json()["segmentations"]
+    assert len(segs) > 0
+    assert all(s["isDemo"] for s in segs)
+    assert segs[0]["segmentationId"] == "1.2.3.fake.sop"
