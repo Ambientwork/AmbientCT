@@ -153,6 +153,17 @@ services:
   #   nginx proxy_pass will return 502 until ai-inference is healthy, which is
   #   acceptable; the viewer frontend handles this gracefully via its mock adapter.
   # ---------------------------------------------------------------------------
+  # ---------------------------------------------------------------------------
+  # ai-inference: Phase 3b-2 — real DentalSegmentator (nnU-Net v2) model.
+  #
+  # Memory budget: 8 GB hard limit (M4 Mac mini 16 GB target).
+  #   Inference runs with --disable_tta --step_size 0.9 to stay within budget.
+  #   Peak RSS for a 300³ int16 CBCT on CPU/MPS ≈ 4–6 GB.
+  #   Add Docker Desktop swap (8 GB) as safety net: Preferences → Resources.
+  #
+  # Model volume: ./data/ai-models is mounted read-only at /models.
+  #   Run `bash scripts/download-models.sh` once before `docker compose up`.
+  # ---------------------------------------------------------------------------
   ai-inference:
     image: ambientct/ai-inference:latest
     build:
@@ -161,22 +172,38 @@ services:
     platform: linux/amd64
     container_name: ambientct-ai-inference
     restart: unless-stopped
-    mem_limit: ${AI_INFERENCE_MEM_LIMIT:-3g}
-    cpus: ${AI_INFERENCE_CPUS:-2.0}
+    mem_limit: ${AI_INFERENCE_MEM_LIMIT:-8g}
+    cpus: ${AI_INFERENCE_CPUS:-4.0}
     environment:
-      AI_INFERENCE_PHASE: "3b-1"
+      AI_INFERENCE_PHASE: "3b-2"
       LOG_LEVEL: "${LOG_LEVEL:-INFO}"
       ORTHANC_URL: "http://orthanc:8042"
       ORTHANC_USER: "${ORTHANC_USER:-admin}"
       ORTHANC_PASSWORD: "${ORTHANC_PASSWORD:?ORTHANC_PASSWORD must be set in .env}"
-      # Phase 3b-2 will add:
-      #   MODEL_PATH: /models/dental-segmentator
+      # Model path inside the container (mounted from ./data/ai-models) —
+      # the VALIDATED, UNPACKED model folder, never the .zip. Populated by
+      # `bash scripts/download-models.sh` (downloads AND unpacks).
+      AI_MODEL_PATH: "${AI_MODEL_PATH:-/models/mandibular-canal/Dataset111_453CT_v100}"
+      # Device: "cpu" is the resilient default for this linux/amd64
+      # container (plan §3.3); "mps" is a native-macOS dev-only option,
+      # never promised as acceleration inside Docker.
+      AI_INFERENCE_DEVICE: "${AI_INFERENCE_DEVICE:-cpu}"
+      # nnU-Net canal label — model metadata (DentalSegmentator's own label
+      # scheme), env-overridable. See .env.example for the full label table.
+      AI_INFERENCE_CANAL_LABEL: "${AI_INFERENCE_CANAL_LABEL:-5}"
+      # Force the synthetic mock predictor regardless of AI_MODEL_PATH.
+      # Default false — until scripts/download-models.sh has downloaded
+      # AND unpacked a valid model folder at AI_MODEL_PATH above,
+      # resolve_inference_mode() correctly reports "unavailable" (not
+      # demo, not real). See ai-inference/pipeline/inference_mode.py.
       AI_INFERENCE_DEMO_MODE: "${AI_INFERENCE_DEMO_MODE:-false}"
       # Whether a demo (mock) segmentation result is persisted to Orthanc
       # via STOW-RS. Default false: keep the main PACS instance free of
       # synthetic data. docker-compose.test.yml overrides this to true for
       # the isolated test stack only.
       AI_INFERENCE_PERSIST_DEMO_SEG: "${AI_INFERENCE_PERSIST_DEMO_SEG:-false}"
+      # Apple MPS: route unsupported ops to CPU instead of crashing
+      PYTORCH_ENABLE_MPS_FALLBACK: "1"
     volumes:
       - ./data/ai-models:/models:ro
     # NO ports: mapping — service is reachable ONLY through the internal pacs-net.
@@ -196,7 +223,7 @@ services:
       interval: 30s
       timeout: 5s
       retries: 3
-      start_period: 30s
+      start_period: 60s
 
   # ---------------------------------------------------------------------------
   # viewer-stock: Pre-built OHIF image (no dental extensions).

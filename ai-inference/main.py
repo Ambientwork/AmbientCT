@@ -57,6 +57,7 @@ from pipeline.quality_check import check_volume_quality
 from pipeline.seg_writer import write_dicom_seg
 from pipeline.segmentation import (
     SegmentationResult,
+    is_real_model_loaded,
     run_mock_segmentation,
     run_segmentation,
 )
@@ -124,8 +125,12 @@ SERVICE_VERSION = "0.3.0"
 # pipeline.inference_mode.resolve_inference_mode() is called fresh on every
 # health check and every job start; see _run_pipeline() and health() below.
 
-AI_INFERENCE_PATCH_SIZE = int(os.environ.get("AI_INFERENCE_PATCH_SIZE", "96"))
 AI_INFERENCE_MEMORY_BUDGET_MB = int(os.environ.get("AI_INFERENCE_MEMORY_BUDGET_MB", "6144"))
+# AI_INFERENCE_PATCH_SIZE was removed (plan §12 P5.3): nnU-Net's sliding-
+# window patch size is fixed by the trained model's plans.json, not a
+# supported runtime override — the variable only ever reached a log line
+# and never affected inference (addendum §18.1 blocker #5). See
+# pipeline/segmentation.py's module docstring for the full rationale.
 
 
 def _persist_demo_seg_enabled() -> bool:
@@ -448,7 +453,6 @@ async def _run_pipeline(job_id: str, study_instance_uid: str) -> None:
             volume,
             model_path=mode_decision.model_path,
             device=mode_decision.device,
-            patch_size=AI_INFERENCE_PATCH_SIZE,
             memory_budget_mb=AI_INFERENCE_MEMORY_BUDGET_MB,
             demo=is_demo,
         )
@@ -707,6 +711,16 @@ async def health() -> dict:
     model that appears on disk after the container started is reflected on
     the very next health call without a restart.
 
+    model_loaded, unlike mode, is NOT a cheap filesystem stat check: it is
+    true only once pipeline.segmentation has actually completed a torch
+    load of the weights at this exact model_path + device (plan §12 P5.2).
+    mode=="real" means "a structurally valid model folder exists on disk
+    right now" — it says nothing about whether the weights have been
+    loaded into memory yet. Immediately after a container start (or right
+    after a config change to a not-yet-loaded path), health can correctly
+    report mode="real", model_loaded=false until the first real job's
+    run_segmentation() call finishes loading.
+
     orthanc_reachable is a single /system probe with a short timeout.
     """
     mode_decision: InferenceModeDecision = resolve_inference_mode()
@@ -718,7 +732,9 @@ async def health() -> dict:
         "status": "ok",
         "version": SERVICE_VERSION,
         "mode": mode_decision.mode,
-        "model_loaded": mode_decision.mode == "real",
+        "model_loaded": is_real_model_loaded(
+            mode_decision.model_path, mode_decision.device
+        ),
         "model_id": mode_decision.model_id,
         "model_version": mode_decision.model_version,
         "phase": "3b-2",

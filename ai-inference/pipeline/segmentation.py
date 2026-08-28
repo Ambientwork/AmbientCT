@@ -10,20 +10,42 @@ Design notes
 ────────────
 * Lazy torch import — torch is only imported inside _load_predictor() so the
   module can be imported (and tests can run) without torch installed.
-* Module-level cache — _PREDICTOR_CACHE holds the loaded NnUNetPredictor
-  (or _MockPredictor) after the first call.  Subsequent calls reuse it.
+* Module-level cache — _PREDICTOR_CACHE is a dict keyed by
+  (mode, model_path, device) so a config change (different model path,
+  different device) can never return a stale predictor loaded under a
+  different configuration (plan §12 P5.2). Subsequent calls with the same
+  key reuse the cached object.
+* Load off the event loop — the actual predictor load (cache miss) runs
+  inside asyncio.to_thread() so a slow first real-model load never blocks
+  the FastAPI event loop / other in-flight requests (plan §12 P5.2).
 * MPS → CPU fallback — attempted automatically; RuntimeError containing
   "MPS", "Placeholder", or "Operator" triggers the retry on CPU.
 * Memory watchdog — _RssWatchdog polls psutil every 200 ms in an asyncio
   task running concurrently with the inference coroutine.  When RSS delta
-  exceeds the budget it cancels the inference task (cooperative cancellation)
-  and raises MemoryBudgetExceeded.
+  exceeds the budget it cancels the *asyncio* inference task (cooperative
+  cancellation) and raises MemoryBudgetExceeded. IMPORTANT — this is
+  OBSERVATIONAL, not a hard kill: cancelling an asyncio.to_thread() task
+  does not stop the underlying OS thread, which keeps running (and keeps
+  holding whatever memory it already allocated) until the blocking call it
+  is in returns on its own. The real hard memory boundary is the Docker
+  `mem_limit` (plan §3.3 / §12 P5.4) — the watchdog only gives the API a
+  faster, cleaner "failed" response and a log line; it does not guarantee
+  the process's memory footprint actually shrinks. True process-level
+  kill-on-breach requires moving inference into its own OS process that the
+  parent can SIGKILL, which is tracked as an open follow-up (plan §12 P5.4 /
+  §17.8), not implemented in this phase.
 * Sliding-window inference — nnUNetPredictor.predict_from_array with
-  tile_step_size=0.5 keeps peak memory bounded by patch_size.
+  tile_step_size=0.9 and mirroring/TTA disabled, matching the documented
+  CPU memory compromise (plan §12 P5.3; see also MODEL_CARD.md).
 * Confidence — mean softmax probability over foreground voxels of the canal
   class, computed from the raw softmax output BEFORE binarisation.
-* Label filter — only the canal label (env AI_INFERENCE_CANAL_LABEL, default
-  1) is extracted from the multi-class label map.
+* Label filter — only the canal label (env AI_INFERENCE_CANAL_LABEL,
+  defaulting to pipeline.inference_mode.REAL_MODEL_CANAL_LABEL == 5, the
+  DentalSegmentator model's own label scheme — see MODEL_CARD.md) is
+  extracted from the multi-class label map. The default was previously 1,
+  which is the model's MAXILLA label, not the canal — a stock deployment
+  would have silently extracted the wrong anatomy (plan §12 P5.3, addendum
+  §18.3, confirmed critical).
 * Demo / mock mode — the caller decides via the explicit `demo` keyword
   argument to run_segmentation(); this module does NOT read
   AI_INFERENCE_DEMO_MODE itself (Phase 3b-2 P1.2 fix: main.py's
@@ -40,11 +62,28 @@ Design notes
   are fine.
 
 Env vars consumed (set by Agent A / infra):
-  AI_MODEL_PATH              path to nnU-Net model directory (folds + plans)
-  AI_INFERENCE_DEVICE        "mps" | "cpu"  (default: "mps")
-  AI_INFERENCE_PATCH_SIZE    sliding-window patch edge in voxels (default: 96)
-  AI_INFERENCE_CANAL_LABEL   int label for mandibular canal (default: 1)
+  AI_MODEL_PATH              path to the VALIDATED, UNPACKED nnU-Net model
+                             directory (dataset.json + plans.json +
+                             fold_*/checkpoint_final.pth) — a .zip path is
+                             rejected upstream by resolve_inference_mode(),
+                             never reaches this module in normal operation.
+  AI_INFERENCE_DEVICE        "mps" | "cpu"  (default: "cpu" — plan §3.3: the
+                             resilient default for the linux/amd64 Docker
+                             path; "mps" only applies on a native macOS
+                             dev host, never promised inside the container)
+  AI_INFERENCE_CANAL_LABEL   int label for mandibular canal
+                             (default: pipeline.inference_mode.
+                             REAL_MODEL_CANAL_LABEL == 5)
   PYTORCH_ENABLE_MPS_FALLBACK=1  set by Agent A; handles most MPS ops auto
+
+  AI_INFERENCE_PATCH_SIZE is intentionally NOT consumed here (removed in
+  plan §12 P5.3): nnU-Net's sliding-window patch size is fixed by the
+  trained model's plans.json at initialize_from_trained_model_folder() time
+  and is not a supported nnUNetPredictor constructor override — the env var
+  reached only a log line and never affected inference (addendum §18.1,
+  blocker #5). Memory is instead bounded via tile_step_size / the RSS
+  watchdog / the Docker mem_limit, not a patch-size knob that does not
+  exist in the underlying library's public API.
 
   AI_INFERENCE_DEMO_MODE is intentionally NOT read here — see `demo` kwarg.
 
@@ -73,7 +112,7 @@ import psutil
 
 from pipeline.dicom_loader import LoadedVolume
 from pipeline.exceptions import MemoryBudgetExceeded, ModelLoadError
-from pipeline.inference_mode import validate_model_folder
+from pipeline.inference_mode import REAL_MODEL_CANAL_LABEL, validate_model_folder
 
 log = logging.getLogger("ai-inference.segmentation")
 
@@ -90,8 +129,18 @@ AnatomyClass = Literal[
 _CANAL_CLASS: AnatomyClass = "mandibular_canal"
 
 # ── Module-level predictor cache ──────────────────────────────────────────────
+#
+# Keyed by (kind, model_path, device) rather than a single bare slot, so a
+# config change between calls — a different AI_MODEL_PATH, a different
+# device — cannot silently return a predictor loaded under a *different*
+# configuration (plan §12 P5.2). "demo" always maps to the same fixed key
+# regardless of model_path/device since the mock predictor ignores both.
 
-_PREDICTOR_CACHE: "_MockPredictor | object | None" = None
+PredictorKey = tuple[str, str, str]  # (kind, model_path_str, device)
+
+_DEMO_CACHE_KEY: PredictorKey = ("demo", "", "cpu")
+
+_PREDICTOR_CACHE: dict[PredictorKey, object] = {}
 
 
 # ── Result dataclass ──────────────────────────────────────────────────────────
@@ -292,7 +341,6 @@ class _RssWatchdog:
 def _load_real_predictor(
     model_path: Path,
     device_str: str,
-    patch_size: int,
 ) -> object:
     """Load nnUNetPredictor from model_path.  torch is imported here only.
 
@@ -303,8 +351,6 @@ def _load_real_predictor(
         dataset.json / plans.json from the training run.
     device_str:
         "mps" or "cpu".
-    patch_size:
-        Sliding-window patch edge length in voxels (used as tile_size).
 
     Returns
     -------
@@ -345,12 +391,25 @@ def _load_real_predictor(
     except Exception as exc:
         raise ModelLoadError(f"Invalid device '{device_str}': {exc}") from exc
 
+    # CPU inference budget (plan §12 P5.3, MODEL_CARD.md "Hardware Notes"):
+    #   tile_step_size=0.9 — larger step = fewer overlapping sliding-window
+    #     patches = less peak RAM (was 0.5, which the docs never actually
+    #     promised — addendum §18.1 blocker #4).
+    #   use_mirroring=False — disables test-time-augmentation mirroring,
+    #     matching the documented `--disable_tta` (was True).
+    #   perform_everything_on_device — keeps softmax aggregation on the
+    #     compute device. On CPU that IS system RAM either way, so forcing
+    #     it False makes nnU-Net use its lower-peak-memory CPU aggregation
+    #     path instead of the GPU-oriented one; True is still appropriate
+    #     for an actual accelerator (mps) where device memory is distinct
+    #     from host RAM.
+    perform_everything_on_device = device.type != "cpu"
     try:
         predictor = nnUNetPredictor(
-            tile_step_size=0.5,
+            tile_step_size=0.9,
             use_gaussian=True,
-            use_mirroring=True,
-            perform_everything_on_device=True,
+            use_mirroring=False,
+            perform_everything_on_device=perform_everything_on_device,
             device=device,
             verbose=False,
             allow_tqdm=False,
@@ -366,24 +425,51 @@ def _load_real_predictor(
         ) from exc
 
     log.info(
-        "nnUNetPredictor loaded: model=%s device=%s patch_size=%d",
+        "nnUNetPredictor loaded: model=%s device=%s tile_step_size=0.9 "
+        "use_mirroring=False perform_everything_on_device=%s",
         model_path.name,
         device_str,
-        patch_size,
+        perform_everything_on_device,
     )
     return predictor
+
+
+def is_real_model_loaded(model_path: Path | None, device: str) -> bool:
+    """True only if a REAL nnU-Net predictor has already been successfully
+    loaded (and cached) for this exact model_path + device combination.
+
+    This is deliberately NOT the same question as "is mode == real"
+    (pipeline.inference_mode.resolve_inference_mode() answers that one from
+    a cheap filesystem stat check). A structurally valid model folder does
+    not guarantee the weights actually load — corrupt checkpoint, OOM
+    during load, incompatible nnunetv2 version, wrong device, etc. Used by
+    main.py's /api/ai/health so `model_loaded` reflects an actual completed
+    torch load, not just "a plausible-looking path exists on disk" (plan
+    §12 P5.2). Before the first real job runs (or after a config change to
+    a not-yet-loaded path/device), this correctly returns False even in
+    mode=real.
+    """
+    if model_path is None:
+        return False
+    return ("real", str(model_path), device) in _PREDICTOR_CACHE
 
 
 def _get_predictor(
     model_path: Path | None,
     device_str: str,
-    patch_size: int,
     demo_mode: bool,
 ) -> tuple[object, str, bool]:
     """Return (predictor, actual_device, is_mock) with MPS→CPU fallback.
 
-    Uses the module-level cache.  On first call loads from disk or creates
-    mock.  Subsequent calls return the cached object.
+    Synchronous — the caller (run_segmentation) is responsible for running
+    this inside asyncio.to_thread() so a cold real-model load never blocks
+    the event loop (plan §12 P5.2).
+
+    Uses the module-level (kind, model_path, device)-keyed cache. On a
+    cache miss, loads from disk (or creates the mock) and stores it under
+    that exact key; a later call with a *different* model_path or device
+    loads (and caches) separately rather than reusing a predictor that was
+    configured differently.
 
     Returns
     -------
@@ -394,19 +480,6 @@ def _get_predictor(
     is_mock:
         True when the mock predictor is active.
     """
-    global _PREDICTOR_CACHE
-
-    if _PREDICTOR_CACHE is not None:
-        # Return cached predictor; determine kind and device from type
-        if isinstance(_PREDICTOR_CACHE, _MockPredictor):
-            return _PREDICTOR_CACHE, "cpu", True
-        # Real predictor — read device from the cached object
-        try:
-            device_used = str(_PREDICTOR_CACHE.device)  # type: ignore[union-attr]
-        except AttributeError:
-            device_used = device_str
-        return _PREDICTOR_CACHE, device_used, False
-
     # ── Decide: mock or real ──────────────────────────────────────────────────
     # demo_mode overrides everything → mock. This is the ONLY branch that
     # produces a mock predictor.
@@ -419,9 +492,12 @@ def _get_predictor(
     # `unavailable` and returns before run_segmentation() is ever called.
     # It remains here as defense-in-depth for direct/test callers.
     if demo_mode:
+        cached = _PREDICTOR_CACHE.get(_DEMO_CACHE_KEY)
+        if cached is not None:
+            return cached, "cpu", True
         log.info("Demo mode active — using mock predictor")
         predictor = _make_mock_predictor()
-        _PREDICTOR_CACHE = predictor
+        _PREDICTOR_CACHE[_DEMO_CACHE_KEY] = predictor
         return predictor, "cpu", True
 
     if model_path is None:
@@ -432,9 +508,13 @@ def _get_predictor(
 
     # ── Attempt real load, MPS first then CPU fallback ────────────────────────
     for attempt_device in ([device_str, "cpu"] if device_str == "mps" else [device_str]):
+        key: PredictorKey = ("real", str(model_path), attempt_device)
+        cached = _PREDICTOR_CACHE.get(key)
+        if cached is not None:
+            return cached, attempt_device, False
         try:
-            predictor = _load_real_predictor(model_path, attempt_device, patch_size)
-            _PREDICTOR_CACHE = predictor
+            predictor = _load_real_predictor(model_path, attempt_device)
+            _PREDICTOR_CACHE[key] = predictor
             return predictor, attempt_device, False
         except ModelLoadError:
             raise  # propagate missing model immediately
@@ -456,13 +536,94 @@ def _get_predictor(
 # ── Core inference function ───────────────────────────────────────────────────
 
 
+def _extract_canal_from_nnunet_result(
+    result: object,
+    canal_label: int,
+    array_shape: tuple[int, ...],
+) -> tuple[np.ndarray, np.ndarray]:
+    """Pure numpy interpretation of nnUNetPredictor.predict_from_array()'s
+    return value — no torch/nnunetv2 import, so this is directly unit-
+    testable without those (heavy, platform-specific) dependencies
+    installed. This is the CONTRACT this codebase pins against the
+    installed nnunetv2 version (plan §12 P5.3): a tuple of
+    (segmentation, softmax_probabilities) where
+      segmentation:  (Z, Y, X) integer label map
+      softmax_probs: (num_classes, Z, Y, X) float array, class-indexed on
+                     axis 0 — softmax_probs[canal_label] is the canal
+                     class's per-voxel probability.
+    An older/different nnunetv2 pin that returns only the segmentation
+    (no softmax tuple) is also handled: confidence then falls back to a
+    fixed proxy value derived from the binary mask alone, tests for this
+    scenario cover that fallback explicitly (test_segmentation.py).
+
+    Parameters
+    ----------
+    result:
+        Whatever predictor.predict_from_array(...) returned.
+    canal_label:
+        Integer label ID to extract as foreground.
+    array_shape:
+        Expected (Z, Y, X) shape — used only to validate softmax_probs'
+        spatial dims defensively; a mismatch falls back to the proxy path
+        rather than raising, since a confidence estimate is not worth
+        failing the whole job over.
+
+    Returns
+    -------
+    canal_mask:
+        uint8 binary mask, shape == array_shape.
+    softmax_canal:
+        float32 probability map, shape == array_shape, values in [0, 1].
+    """
+    if isinstance(result, (list, tuple)) and len(result) == 2:
+        seg, softmax = result
+    else:
+        # Older nnunetv2 API returns only segmentation
+        seg = result
+        softmax = None
+
+    seg_np = np.array(seg)
+    canal_mask = (seg_np == canal_label).astype(np.uint8)
+
+    if softmax is not None:
+        softmax_np = np.array(softmax)
+        # softmax_np shape: (num_classes, Z, Y, X)
+        # Canal class is at index canal_label
+        if (
+            softmax_np.ndim == 4
+            and softmax_np.shape[0] > canal_label
+            and softmax_np.shape[1:] == array_shape
+        ):
+            softmax_canal = softmax_np[canal_label].astype(np.float32)
+        else:
+            # Fallback: use binarised mask as proxy probability
+            softmax_canal = canal_mask.astype(np.float32) * 0.85
+    else:
+        softmax_canal = canal_mask.astype(np.float32) * 0.85
+
+    return canal_mask, softmax_canal
+
+
 def _run_inference_sync(
     predictor: object,
     pixel_array: np.ndarray,
+    spacing_mm: tuple[float, float, float],
     is_mock: bool,
     canal_label: int,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Synchronous forward pass.  Runs in a thread via asyncio.to_thread().
+
+    Parameters
+    ----------
+    spacing_mm:
+        The loaded volume's real voxel spacing (dZ, dY, dX) in millimetres
+        — same axis order as pixel_array (plan §12 P5.3). Previously this
+        was hardcoded to [1.0, 1.0, 1.0] regardless of the actual volume
+        (addendum §18.1 blocker #6); nnU-Net resamples to its trained
+        target spacing internally using whatever it is told the input
+        spacing is, so a wrong value here silently mis-scales the volume
+        before inference. Unused on the mock path (mock has no notion of
+        physical spacing).
 
     Returns
     -------
@@ -488,40 +649,23 @@ def _run_inference_sync(
     # Add channel dim: shape (1, Z, Y, X)
     inp = arr_f32[np.newaxis, ...]
 
-    # predict_from_array returns (segmentation, softmax_probs)
-    # segmentation: (Z, Y, X) int or uint8
-    # softmax_probs: (num_classes, Z, Y, X) float32
+    # predict_from_array returns (segmentation, softmax_probs) — see
+    # _extract_canal_from_nnunet_result's docstring for the pinned contract.
     result = predictor.predict_from_array(  # type: ignore[union-attr]
         inp,
         properties={
-            "spacing": [1.0, 1.0, 1.0],  # will be overridden by model plans
+            # Real geometry, in the same (Z, Y, X) axis order as pixel_array
+            # — nnU-Net's own SimpleITKIO reader produces spacing in this
+            # same reversed-from-ITK order for arrays read via
+            # GetArrayFromImage(), which is the convention this in-memory
+            # path mirrors (was a hardcoded [1, 1, 1] — addendum §18.1
+            # blocker #6).
+            "spacing": list(spacing_mm),
         },
         save_probabilities=True,
     )
 
-    if isinstance(result, (list, tuple)) and len(result) == 2:
-        seg, softmax = result
-    else:
-        # Older nnunetv2 API returns only segmentation
-        seg = result
-        softmax = None
-
-    seg_np = np.array(seg)
-    canal_mask = (seg_np == canal_label).astype(np.uint8)
-
-    if softmax is not None:
-        softmax_np = np.array(softmax)
-        # softmax_np shape: (num_classes, Z, Y, X)
-        # Canal class is at index canal_label
-        if softmax_np.ndim == 4 and softmax_np.shape[0] > canal_label:
-            softmax_canal = softmax_np[canal_label].astype(np.float32)
-        else:
-            # Fallback: use binarised mask as proxy probability
-            softmax_canal = canal_mask.astype(np.float32) * 0.85
-    else:
-        softmax_canal = canal_mask.astype(np.float32) * 0.85
-
-    return canal_mask, softmax_canal
+    return _extract_canal_from_nnunet_result(result, canal_label, pixel_array.shape)
 
 
 def _compute_confidence(canal_mask: np.ndarray, softmax_canal: np.ndarray) -> float:
@@ -545,8 +689,7 @@ async def run_segmentation(
     volume: LoadedVolume,
     *,
     model_path: Path | None = None,
-    device: str = "mps",
-    patch_size: int = 96,
+    device: str = "cpu",
     memory_budget_mb: int = 6144,
     demo: bool = False,
 ) -> SegmentationResult:
@@ -560,9 +703,9 @@ async def run_segmentation(
         Path to nnU-Net model directory.  If None, falls back to the
         AI_MODEL_PATH env var (only relevant when demo=False).
     device:
-        Preferred device: "mps" or "cpu".  Falls back to CPU on MPS errors.
-    patch_size:
-        Sliding-window patch edge length in voxels (passed to nnUNetPredictor).
+        Preferred device: "mps" or "cpu" (default "cpu" — plan §3.3: the
+        resilient default for the linux/amd64 Docker path). Falls back to
+        CPU on MPS errors.
     memory_budget_mb:
         Hard ceiling on RSS delta in MB.  Exceeding it raises MemoryBudgetExceeded.
     demo:
@@ -601,26 +744,29 @@ async def run_segmentation(
     if env_device in ("mps", "cpu"):
         device = env_device
 
-    env_patch = os.environ.get("AI_INFERENCE_PATCH_SIZE", "")
-    if env_patch.isdigit():
-        patch_size = int(env_patch)
-
-    canal_label = int(os.environ.get("AI_INFERENCE_CANAL_LABEL", "1"))
+    canal_label = int(
+        os.environ.get("AI_INFERENCE_CANAL_LABEL", str(REAL_MODEL_CANAL_LABEL))
+    )
 
     log.info(
-        "run_segmentation: shape=%s dtype=%s device=%s patch_size=%d "
+        "run_segmentation: shape=%s dtype=%s device=%s canal_label=%d "
         "budget_mb=%d demo_mode=%s",
         volume.pixel_array.shape,
         volume.pixel_array.dtype,
         device,
-        patch_size,
+        canal_label,
         memory_budget_mb,
         demo_mode,
     )
 
     # ── Load / retrieve cached predictor ──────────────────────────────────────
-    predictor, actual_device, is_mock = _get_predictor(
-        model_path, device, patch_size, demo_mode
+    # Off the event loop (plan §12 P5.2): a cache hit returns near-instantly,
+    # but a cache miss on the real path runs torch model load + weight
+    # deserialisation synchronously — without to_thread that would block
+    # the FastAPI event loop (and every other in-flight request) for the
+    # duration of the first real job (addendum §18.3 P5.2).
+    predictor, actual_device, is_mock = await asyncio.to_thread(
+        _get_predictor, model_path, device, demo_mode
     )
 
     # ── Memory watchdog setup ─────────────────────────────────────────────────
@@ -638,6 +784,7 @@ async def run_segmentation(
             _run_inference_sync,
             predictor,
             volume.pixel_array,
+            volume.spacing_mm,
             is_mock,
             canal_label,
         )
@@ -683,6 +830,20 @@ async def run_segmentation(
 
     # ── Compute confidence ────────────────────────────────────────────────────
     confidence = _compute_confidence(canal_mask, softmax_canal)
+
+    if not is_mock and not canal_mask.any():
+        # An empty real-model canal mask is a review case, not a failure and
+        # never a fabricated positive finding (plan §12 P5.3): the caller
+        # (main.py / seg_writer.py) already skips persisting an all-zero
+        # mask as if it were a successful segmentation — this log line just
+        # makes that "nothing found" outcome visible in service logs rather
+        # than silent.
+        log.warning(
+            "Real segmentation produced an EMPTY canal mask — no voxels "
+            "labelled %d — flag for manual review, no SEG will be persisted "
+            "for this class",
+            canal_label,
+        )
 
     log.info(
         "Segmentation complete: device=%s inference_s=%.2f peak_mb=%d "

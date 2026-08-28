@@ -49,6 +49,15 @@ DEMO_MODEL_VERSION = "0.0.0-3b-2-demo"
 REAL_MODEL_ID = "dental-segmentator"
 REAL_MODEL_VERSION = "v1.0.0-alpha"
 
+# DentalSegmentator label scheme (5 foreground classes; see
+# scripts/download-models.sh MODEL_CARD.md for the full table):
+#   1=maxilla  2=mandible  3=upper teeth  4=lower teeth  5=mandibular canal
+# This is model metadata, not a runtime guess — AI_INFERENCE_CANAL_LABEL
+# defaults to it but stays env-overridable (plan §12 P5.3). A wrong default
+# here does not fail loudly: it silently extracts the wrong anatomy, which
+# is why this is a named, documented constant rather than an inline "1".
+REAL_MODEL_CANAL_LABEL = 5
+
 _REQUIRED_MODEL_FILES: tuple[str, ...] = ("dataset.json", "plans.json")
 
 # Reason codes are short, PHI-free, machine-readable tokens (never a

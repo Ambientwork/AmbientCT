@@ -25,6 +25,7 @@ from pathlib import Path
 
 from pipeline.inference_mode import (
     DEMO_MODEL_ID,
+    REAL_MODEL_CANAL_LABEL,
     REAL_MODEL_ID,
     REASON_DEMO_FORCED,
     REASON_MODEL_FOLDER_MISSING_FILES,
@@ -174,3 +175,14 @@ def test_validate_model_folder_directly(tmp_path: Path) -> None:
     is_valid, reason = validate_model_folder(valid)
     assert is_valid is True
     assert reason == REASON_OK
+
+
+# ── Model metadata ───────────────────────────────────────────────────────────
+
+
+def test_real_model_canal_label_is_five() -> None:
+    """DentalSegmentator's own label scheme puts the mandibular canal at
+    label 5, not 1 (its maxilla label) — plan §12 P5.3 / addendum §18.3,
+    confirmed critical. pipeline/segmentation.py imports this constant as
+    the default for AI_INFERENCE_CANAL_LABEL."""
+    assert REAL_MODEL_CANAL_LABEL == 5

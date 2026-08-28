@@ -651,3 +651,81 @@ async def test_all_seg_uploads_failing_sets_job_failed_not_review_required(
     assert r2.json()["segmentations"] == []
     r3 = await client.get(f"/api/ai/findings/{STUDY_UID}")
     assert r3.json()["findings"] == []
+
+
+# ── Phase 3b-2 P5.2 — model_loaded reflects an actual load, not just mode ─────
+
+
+@pytest.mark.asyncio
+async def test_health_model_loaded_false_for_real_mode_before_any_load(
+    client: AsyncClient, monkeypatch, tmp_path
+) -> None:
+    """mode=='real' (a structurally valid model folder exists) must NOT by
+    itself make model_loaded true — plan §12 P5.2: model_loaded reflects an
+    actual completed torch load, which never happened in this test (no job
+    ran), not merely that a plausible path exists on disk.
+    """
+    model_dir = tmp_path / "valid-model"
+    model_dir.mkdir()
+    (model_dir / "dataset.json").write_text("{}")
+    (model_dir / "plans.json").write_text("{}")
+    (model_dir / "fold_0").mkdir()
+
+    monkeypatch.setenv("AI_INFERENCE_DEMO_MODE", "false")
+    monkeypatch.setenv("AI_MODEL_PATH", str(model_dir))
+    monkeypatch.setenv("AI_INFERENCE_DEVICE", "cpu")
+
+    with patch("main.OrthancClient") as mock_cls:
+        mock_instance = AsyncMock()
+        mock_instance.__aenter__ = AsyncMock(return_value=mock_instance)
+        mock_instance.__aexit__ = AsyncMock(return_value=None)
+        mock_instance.check_reachable = AsyncMock(return_value=False)
+        mock_cls.return_value = mock_instance
+
+        r = await client.get("/api/ai/health")
+
+    body = r.json()
+    assert body["mode"] == "real"
+    assert body["model_loaded"] is False
+
+
+@pytest.mark.asyncio
+async def test_health_model_loaded_true_after_cached_load(
+    client: AsyncClient, monkeypatch, tmp_path
+) -> None:
+    """Once pipeline.segmentation's predictor cache holds an entry for the
+    exact (model_path, device) health resolves, model_loaded flips to true
+    — proving main.py actually wires is_real_model_loaded() into the
+    health response rather than deriving it from mode alone. The cache is
+    populated directly (no torch import, no real weights) since only the
+    wiring between resolve_inference_mode()'s output and
+    is_real_model_loaded()'s lookup is under test here.
+    """
+    import pipeline.segmentation as seg_module
+
+    model_dir = tmp_path / "valid-model"
+    model_dir.mkdir()
+    (model_dir / "dataset.json").write_text("{}")
+    (model_dir / "plans.json").write_text("{}")
+    (model_dir / "fold_0").mkdir()
+
+    monkeypatch.setenv("AI_INFERENCE_DEMO_MODE", "false")
+    monkeypatch.setenv("AI_MODEL_PATH", str(model_dir))
+    monkeypatch.setenv("AI_INFERENCE_DEVICE", "cpu")
+
+    seg_module._PREDICTOR_CACHE[("real", str(model_dir), "cpu")] = object()
+    try:
+        with patch("main.OrthancClient") as mock_cls:
+            mock_instance = AsyncMock()
+            mock_instance.__aenter__ = AsyncMock(return_value=mock_instance)
+            mock_instance.__aexit__ = AsyncMock(return_value=None)
+            mock_instance.check_reachable = AsyncMock(return_value=False)
+            mock_cls.return_value = mock_instance
+
+            r = await client.get("/api/ai/health")
+
+        body = r.json()
+        assert body["mode"] == "real"
+        assert body["model_loaded"] is True
+    finally:
+        seg_module._PREDICTOR_CACHE.clear()
