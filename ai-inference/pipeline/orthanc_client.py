@@ -24,6 +24,7 @@ Error hierarchy:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 from dataclasses import dataclass
@@ -39,6 +40,15 @@ log = logging.getLogger("ai-inference.orthanc")
 # connect: 60 s  (container cold-start)
 # read:   300 s  (large CBCT frame transfer)
 _TIMEOUT = httpx.Timeout(connect=60.0, read=300.0, write=60.0, pool=60.0)
+
+# ── STOW-RS retry policy (plan P4.3) ────────────────────────────────────────
+# Bounded retries ONLY for transient failures: a network error (Orthanc
+# unreachable/timeout) or a 5xx server error. NOT retried: 4xx (client sent
+# something Orthanc will always reject), 401/403/404, or a STOW-RS-level
+# FailedSOPSequence rejection (StowRsRejected) — none of these are transient,
+# retrying them would just waste time and could not change the outcome.
+_STOW_MAX_ATTEMPTS = 3  # 1 initial attempt + 2 retries
+_STOW_RETRY_DELAYS_S: tuple[float, ...] = (0.2, 0.5)  # before attempt 2, 3
 
 
 # ── Exceptions ────────────────────────────────────────────────────────────────
@@ -351,8 +361,13 @@ class OrthancClient:
         """
         STOW-RS: POST a single DICOM Part-10 instance to Orthanc.
 
-        Encodes the payload as ``multipart/related; type="application/dicom"``
-        with a single part containing the raw DICOM bytes.
+        Bounded retries (plan P4.3): a transient failure — OrthancNetworkError
+        (unreachable/timeout) or OrthancServerError (5xx) — is retried up to
+        ``_STOW_MAX_ATTEMPTS - 1`` times with a short delay, then the last
+        exception is re-raised. Every other failure (4xx, 401/403/404,
+        StowRsRejected) is NOT transient and is raised immediately on the
+        first attempt — retrying a request Orthanc will always reject the
+        same way would only waste time.
 
         Endpoint
         --------
@@ -370,19 +385,53 @@ class OrthancClient:
         OrthancClientError
             On 4xx responses (excluding 401/403/404 which raise their own types).
         OrthancServerError
-            On 5xx responses.
+            On 5xx responses that persisted through all retry attempts.
         OrthancNetworkError
-            On transport-level failures (connection refused, timeout).
+            On transport-level failures that persisted through all retry
+            attempts (connection refused, timeout).
         StowRsRejected
             When the response JSON contains a non-empty FailedSOPSequence,
             meaning Orthanc accepted the HTTP request but rejected the instance.
         """
+        last_exc: OrthancNetworkError | OrthancServerError | None = None
+        for attempt in range(1, _STOW_MAX_ATTEMPTS + 1):
+            try:
+                return await self._stow_rs_post_once(dicom_bytes, study_uid)
+            except (OrthancNetworkError, OrthancServerError) as exc:
+                last_exc = exc
+                if attempt >= _STOW_MAX_ATTEMPTS:
+                    break
+                log.warning(
+                    "STOW-RS transient failure on attempt %d/%d (%s) — retrying",
+                    attempt,
+                    _STOW_MAX_ATTEMPTS,
+                    type(exc).__name__,
+                )
+                await asyncio.sleep(_STOW_RETRY_DELAYS_S[attempt - 1])
+
+        assert last_exc is not None  # loop always sets it before exhausting
+        raise last_exc
+
+    async def _stow_rs_post_once(
+        self,
+        dicom_bytes: bytes,
+        study_uid: str | None = None,
+    ) -> dict[str, Any]:
+        """Single STOW-RS attempt, no retries. See ``stow_rs_post`` for the
+        public, retrying entry point."""
         if study_uid:
             path = f"/dicom-web/studies/{study_uid}/"
         else:
             path = "/dicom-web/studies"
 
         url = f"{self._base}/{path.lstrip('/')}"
+
+        # PHI-safe path for log/exception messages: study_uid truncated, never
+        # logged in full (plan P4.3). `path`/`url` above (unsanitised) are used
+        # ONLY for the actual HTTP request, never for logging.
+        safe_path = (
+            f"/dicom-web/studies/{_safe_uid(study_uid)}/" if study_uid else path
+        )
 
         # Build multipart/related body with a random hex boundary
         boundary = os.urandom(16).hex()
@@ -401,7 +450,7 @@ class OrthancClient:
 
         log.debug(
             "STOW-RS POST to %s (%d bytes payload)",
-            path,
+            safe_path,
             len(body),
         )
 
@@ -416,26 +465,25 @@ class OrthancClient:
             )
         except (httpx.ConnectError, httpx.TimeoutException, httpx.TransportError) as exc:
             raise OrthancNetworkError(
-                f"Network error reaching Orthanc at {self._base}: {exc}"
+                f"Network error reaching Orthanc at {self._base} for STOW-RS "
+                f"{safe_path}: {type(exc).__name__}"
             ) from exc
 
         # Map HTTP status codes to typed exceptions
         if resp.status_code in (401, 403):
             raise OrthancAuthError(
-                f"Orthanc auth failed (HTTP {resp.status_code}) for {path}"
+                f"Orthanc auth failed (HTTP {resp.status_code}) for STOW-RS {safe_path}"
             )
         if resp.status_code == 404:
-            raise OrthancNotFound(f"Orthanc returned 404 for STOW-RS {path}")
+            raise OrthancNotFound(f"Orthanc returned 404 for STOW-RS {safe_path}")
         if 400 <= resp.status_code < 500:
             raise OrthancClientError(
-                f"Orthanc returned HTTP {resp.status_code} for STOW-RS {path}: "
-                f"{resp.text[:200]}",
+                f"Orthanc returned HTTP {resp.status_code} for STOW-RS {safe_path}",
                 status_code=resp.status_code,
             )
         if resp.status_code >= 500:
             raise OrthancServerError(
-                f"Orthanc server error HTTP {resp.status_code} for STOW-RS {path}: "
-                f"{resp.text[:200]}",
+                f"Orthanc server error HTTP {resp.status_code} for STOW-RS {safe_path}",
                 status_code=resp.status_code,
             )
 
@@ -458,5 +506,5 @@ class OrthancClient:
                 reasons.append(reason_str)
             raise StowRsRejected(failed_count=len(failed_seq), reasons=reasons)
 
-        log.debug("STOW-RS success for %s", path)
+        log.debug("STOW-RS success for %s", safe_path)
         return response_json

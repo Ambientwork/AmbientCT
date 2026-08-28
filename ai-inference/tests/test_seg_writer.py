@@ -37,7 +37,7 @@ import pydicom
 import pytest
 
 from pipeline.dicom_loader import LoadedVolume
-from pipeline.seg_writer import write_dicom_seg
+from pipeline.seg_writer import SegWriterError, write_dicom_seg
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -66,6 +66,11 @@ MODEL_VERSION = "0.0.1"
 # ── Fixtures ──────────────────────────────────────────────────────────────────
 
 
+def _make_source_sop_uids(n_slices: int) -> tuple[str, ...]:
+    """Deterministic, distinct per-slice SOPInstanceUIDs for test fixtures."""
+    return tuple(f"1.2.840.10008.5.1.4.1.1.2.9999.SOURCE.{i}" for i in range(n_slices))
+
+
 def _make_volume(
     n_slices: int = _N_SLICES,
     rows: int = _ROWS,
@@ -73,6 +78,9 @@ def _make_volume(
     for_uid: str = FOR_UID,
     study_uid: str = STUDY_UID,
     series_uid: str = SERIES_UID,
+    source_sop_instance_uids: tuple[str, ...] | None = None,
+    patient_id: str = "SN-PHANTOM-001",
+    patient_name: str = "PHANTOM^DENTAL^CBCT",
 ) -> LoadedVolume:
     """Return a synthetic LoadedVolume with the given geometry."""
     pixel_array = np.zeros((n_slices, rows, cols), dtype=np.int16)
@@ -83,7 +91,14 @@ def _make_volume(
         direction=_DIRECTION,
         study_instance_uid=study_uid,
         series_instance_uid=series_uid,
+        patient_id=patient_id,
+        patient_name=patient_name,
         frame_of_reference_uid=for_uid,
+        source_sop_instance_uids=(
+            source_sop_instance_uids
+            if source_sop_instance_uids is not None
+            else _make_source_sop_uids(n_slices)
+        ),
     )
 
 
@@ -336,6 +351,88 @@ def test_write_all_zero_mask_is_skipped() -> None:
     )
 
     assert results == [], "All-zero mask must produce no output"
+
+
+# ── Source-instance references (plan P4.1 / P4.2) ──────────────────────────
+
+
+def test_write_seg_references_real_source_sop_instance_uids() -> None:
+    """
+    Per-frame source-instance references in the written SEG must point at the
+    REAL source SOPInstanceUIDs from source_volume.source_sop_instance_uids —
+    not a freshly fabricated UID. A SEG referencing fabricated UIDs would be
+    structurally valid but its source-instance references would resolve to
+    nothing in the PACS.
+    """
+    source_uids = _make_source_sop_uids(_N_SLICES)
+    volume = _make_volume(source_sop_instance_uids=source_uids)
+    mask = _make_canal_mask()
+
+    results = write_dicom_seg(
+        source_volume=volume,
+        masks_by_class={"mandibular_canal": mask},
+        model_id=MODEL_ID,
+        model_version=MODEL_VERSION,
+    )
+
+    seg_ds = pydicom.dcmread(io.BytesIO(results[0].dicom_bytes))
+
+    referenced_uids: set[str] = set()
+    for frame_group in seg_ds.PerFrameFunctionalGroupsSequence:
+        deriv_seq = frame_group.DerivationImageSequence
+        for deriv in deriv_seq:
+            for src in deriv.SourceImageSequence:
+                referenced_uids.add(str(src.ReferencedSOPInstanceUID))
+
+    assert referenced_uids, "No per-frame source-instance references found"
+    # Every referenced UID must be one of the real source UIDs we supplied —
+    # never a value outside that set (which would indicate fabrication).
+    assert referenced_uids.issubset(set(source_uids)), (
+        f"SEG references UIDs not in the real source series: "
+        f"{referenced_uids - set(source_uids)}"
+    )
+
+
+def test_write_seg_preserves_patient_module() -> None:
+    """
+    Plan P4.2: the written SEG must carry the SAME PatientID/PatientName as
+    its source_volume. A missing PatientID is not cosmetic — Orthanc keys a
+    study's identity on (PatientID, StudyInstanceUID) together, so a SEG
+    with an empty PatientID silently lands in a second, separate study
+    resource that shares the source's StudyInstanceUID, breaking QIDO study
+    listing for every viewer.
+    """
+    volume = _make_volume(patient_id="SN-PHANTOM-001", patient_name="PHANTOM^DENTAL^CBCT")
+    mask = _make_canal_mask()
+
+    results = write_dicom_seg(
+        source_volume=volume,
+        masks_by_class={"mandibular_canal": mask},
+        model_id=MODEL_ID,
+        model_version=MODEL_VERSION,
+    )
+
+    seg_ds = pydicom.dcmread(io.BytesIO(results[0].dicom_bytes))
+    assert str(seg_ds.PatientID) == "SN-PHANTOM-001"
+    assert str(seg_ds.PatientName) == "PHANTOM^DENTAL^CBCT"
+
+
+def test_write_seg_rejects_mismatched_source_sop_instance_uid_count() -> None:
+    """
+    write_dicom_seg must raise SegWriterError (not silently fabricate UIDs)
+    when source_sop_instance_uids is missing or the wrong length for the
+    volume — e.g. the caller forgot to populate it after loading the volume.
+    """
+    volume = _make_volume(source_sop_instance_uids=())  # empty: default/unset
+    mask = _make_canal_mask()
+
+    with pytest.raises(SegWriterError, match="source_sop_instance_uids"):
+        write_dicom_seg(
+            source_volume=volume,
+            masks_by_class={"mandibular_canal": mask},
+            model_id=MODEL_ID,
+            model_version=MODEL_VERSION,
+        )
 
 
 # ── is_demo marking (plan P1.3) ─────────────────────────────────────────────

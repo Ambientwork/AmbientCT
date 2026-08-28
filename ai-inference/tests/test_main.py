@@ -36,14 +36,24 @@ STUDY_UID = "1.2.840.10008.5.1.4.1.1.2.test"
 
 def _fake_volume() -> LoadedVolume:
     """Return a minimal LoadedVolume for mocking load_volume_from_orthanc."""
+    n_slices = 10
     return LoadedVolume(
-        pixel_array=np.zeros((10, 64, 64), dtype=np.int16),
+        pixel_array=np.zeros((n_slices, 64, 64), dtype=np.int16),
         spacing_mm=(0.4, 0.4, 0.4),
         origin_mm=(0.0, 0.0, 0.0),
         direction=(1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0),
         study_instance_uid=STUDY_UID,
         series_instance_uid="1.2.3.4.series",
         frame_of_reference_uid="1.2.3.4.for",
+        # Real write_dicom_seg() (Stage 4b, plan P4.2) requires one entry per
+        # slice — a fake volume with none would raise SegWriterError as soon
+        # as any test enables AI_INFERENCE_PERSIST_DEMO_SEG without also
+        # patching main.write_dicom_seg.
+        source_sop_instance_uids=tuple(
+            f"1.2.3.4.source.{i}" for i in range(n_slices)
+        ),
+        patient_id="SN-PHANTOM-001",
+        patient_name="PHANTOM^DENTAL^CBCT",
     )
 
 
@@ -597,3 +607,47 @@ async def test_demo_with_persistence_stows_and_marks_seg_as_demo(
     assert len(segs) > 0
     assert all(s["isDemo"] for s in segs)
     assert segs[0]["segmentationId"] == "1.2.3.fake.sop"
+
+
+@pytest.mark.asyncio
+async def test_all_seg_uploads_failing_sets_job_failed_not_review_required(
+    client: AsyncClient, monkeypatch
+) -> None:
+    """Plan P4.3/P4.4: a STOW-RS upload failure must never present a false
+    overall success. When every SEG produced this run fails to upload, the
+    job must end in status=failed (not review_required) with a PHI-free
+    error — review_required is reserved for a completed configured path.
+    """
+    monkeypatch.setenv("AI_INFERENCE_PERSIST_DEMO_SEG", "true")
+
+    from pipeline.orthanc_writer import UploadedSegmentation
+
+    async def _all_fail_upload(_client, written, study_uid):
+        assert written, "test setup expected at least one WrittenSegmentation"
+        return [
+            UploadedSegmentation(
+                anatomy_class=w.anatomy_class,
+                sop_instance_uid=w.sop_instance_uid,
+                series_instance_uid=w.series_instance_uid,
+                success=False,
+                error_message="OrthancServerError: upload failed",
+            )
+            for w in written
+        ]
+
+    with patch("main.upload_segmentations", side_effect=_all_fail_upload):
+        r = await client.post("/api/ai/jobs", json={"studyInstanceUID": STUDY_UID})
+        job_id = r.json()["jobId"]
+        data = await _wait_for_status(client, job_id, "failed", timeout_s=8.0)
+
+    assert data["status"] == "failed"
+    assert data["error"]
+    # PHI-free: the stored error must never contain the raw StudyInstanceUID.
+    assert STUDY_UID not in data["error"]
+
+    # The job must never have reached review_required with results that were
+    # never actually persisted — nothing should be stored for this study.
+    r2 = await client.get(f"/api/ai/segmentations/{STUDY_UID}")
+    assert r2.json()["segmentations"] == []
+    r3 = await client.get(f"/api/ai/findings/{STUDY_UID}")
+    assert r3.json()["findings"] == []

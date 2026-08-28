@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import io
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 import numpy as np
@@ -68,6 +68,28 @@ class LoadedVolume:
         DICOM SeriesInstanceUID of the loaded series.
     frame_of_reference_uid:
         FrameOfReferenceUID — required for DICOM SEG overlay alignment (3b-2).
+    source_sop_instance_uids:
+        Per-slice SOPInstanceUID of the ORIGINAL source instances, in the
+        same ascending-Z order as ``pixel_array``'s first axis (index i here
+        corresponds to ``pixel_array[i]``). Required by seg_writer.py to
+        build DICOM SEG per-frame source-instance references (plan P4.1/
+        P4.2) that point at the real instances stored in Orthanc — a SEG
+        referencing fabricated UIDs would not resolve in any PACS/viewer.
+        Defaults to an empty tuple for callers (tests, other pipeline
+        stages) that never write a DICOM SEG from this volume; seg_writer
+        raises SegWriterError if it is empty or mis-sized when a SEG write
+        is actually attempted.
+    patient_id, patient_name, patient_birth_date, patient_sex:
+        Copied verbatim from the source series (study-level demographics,
+        identical across all instances of one series) so a derived DICOM
+        SEG can carry the same Patient module as its source (plan P4.2).
+        A SEG missing PatientID is not a cosmetic gap: Orthanc keys a
+        study's identity on (PatientID, StudyInstanceUID) together, so a
+        SEG with an empty PatientID silently lands in a SECOND, separate
+        Orthanc "study" resource sharing the same StudyInstanceUID —
+        breaking QIDO (duplicate study rows) and any PACS/viewer that
+        expects one patient per study. Never logged (PHI) — see module
+        docstring.
     """
 
     pixel_array: np.ndarray
@@ -77,6 +99,11 @@ class LoadedVolume:
     study_instance_uid: str
     series_instance_uid: str
     frame_of_reference_uid: str
+    source_sop_instance_uids: tuple[str, ...] = field(default_factory=tuple)
+    patient_id: str = ""
+    patient_name: str = ""
+    patient_birth_date: str = ""
+    patient_sex: str = ""
 
 
 # ── Internal helpers ──────────────────────────────────────────────────────────
@@ -358,6 +385,13 @@ async def load_volume_from_orthanc(
     # ── Step 5: sort slices by Z ascending ───────────────────────────────────
     slices.sort(key=lambda s: s.z)
 
+    # Real per-slice SOPInstanceUID, same order as the sorted stack. Needed
+    # by seg_writer.py to reference the actual source instances (plan P4.1/
+    # P4.2) instead of fabricating new ones.
+    source_sop_instance_uids = tuple(
+        _ds_str(sl.ds, "SOPInstanceUID") for sl in slices
+    )
+
     # ── Step 6: slice-spacing uniformity check ────────────────────────────────
     z_positions = [s.z for s in slices]
     if len(z_positions) >= 2:
@@ -381,6 +415,15 @@ async def load_volume_from_orthanc(
 
     # ── Step 7: extract spacing and orientation from first slice ──────────────
     first_ds = slices[0].ds
+
+    # Patient module — study-level demographics, identical across all
+    # instances of one series. Copied through so a derived DICOM SEG can
+    # carry the same Patient module as its source (plan P4.2). PHI: never
+    # logged, never included in any exception message below.
+    patient_id = _ds_str(first_ds, "PatientID")
+    patient_name = _ds_str(first_ds, "PatientName")
+    patient_birth_date = _ds_str(first_ds, "PatientBirthDate")
+    patient_sex = _ds_str(first_ds, "PatientSex")
 
     pix_spacing = _parse_pixel_spacing(first_ds)
     if pix_spacing is None:
@@ -446,4 +489,9 @@ async def load_volume_from_orthanc(
         study_instance_uid=study_instance_uid,
         series_instance_uid=series_uid,
         frame_of_reference_uid=frame_of_reference_uid,
+        source_sop_instance_uids=source_sop_instance_uids,
+        patient_id=patient_id,
+        patient_name=patient_name,
+        patient_birth_date=patient_birth_date,
+        patient_sex=patient_sex,
     )

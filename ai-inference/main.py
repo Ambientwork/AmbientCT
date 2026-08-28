@@ -481,6 +481,7 @@ async def _run_pipeline(job_id: str, study_instance_uid: str) -> None:
         )
 
         seg_list: list[AiSegmentationMask] = []
+        upload_warning: Optional[str] = None
 
         if should_persist:
             written = write_dicom_seg(
@@ -498,10 +499,34 @@ async def _run_pipeline(job_id: str, study_instance_uid: str) -> None:
 
             n_uploaded = sum(1 for u in uploaded if u.success)
             n_failed = len(uploaded) - n_uploaded
+
+            # plan P4.3/P4.4: a partial (or total) STOW-RS upload failure must
+            # never present a false overall success. When SEGs were produced
+            # but NONE of them made it into Orthanc, the configured
+            # persistence path did not complete — fail the job outright
+            # rather than reporting review_required with results that were
+            # never actually persisted. `written` empty (all-zero mask,
+            # nothing to persist) is NOT a failure and falls through normally.
+            if written and n_uploaded == 0:
+                log.error(
+                    "Job %s: all %d SEG upload(s) failed — persistence "
+                    "path did not complete",
+                    job_id[:8],
+                    len(uploaded),
+                )
+                await _set_job_status(
+                    job_id,
+                    "failed",
+                    progress=0.85,
+                    error="DICOM SEG upload to Orthanc failed",
+                )
+                return
+
             if n_failed:
                 log.warning(
                     "Job %s: %d/%d SEG uploads failed", job_id[:8], n_failed, len(uploaded)
                 )
+                upload_warning = f"{n_failed} of {len(uploaded)} segmentation upload(s) failed"
 
             # Real (or explicitly persisted demo) anatomy segmentations — one
             # per class that succeeded to upload. Findings stay mock for now —
@@ -575,6 +600,12 @@ async def _run_pipeline(job_id: str, study_instance_uid: str) -> None:
             job.status = "review_required"
             job.progress = 1.0
             job.updated_at = _now_iso()
+            # Non-fatal: some (not all) SEG uploads failed — job still
+            # reaches review_required for the segmentations that DID
+            # persist, but the API surface must not look like a full,
+            # silent success (plan P4.3).
+            if upload_warning is not None:
+                job.error = upload_warning
 
         elapsed = (datetime.now(timezone.utc) - t0).total_seconds()
         log.info(

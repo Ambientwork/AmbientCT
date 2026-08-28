@@ -14,6 +14,12 @@ Critical geometry invariants
   - SeriesInstanceUID is freshly generated (own series per SEG).
   - ImagePositionPatient per frame is computed from source geometry so
     PlanePositionSequence aligns to the source axial stack.
+  - Per-frame source-instance references (DerivationImageSequence /
+    SourceImageSequence) use source_volume.source_sop_instance_uids — the
+    REAL SOPInstanceUIDs of the instances stored in Orthanc (plan P4.2).
+    Earlier versions fabricated a fresh UID per slice here; a SEG built
+    that way looks structurally valid but its source-instance references
+    resolve to nothing in the PACS.
 
 PHI-safe logging:
   - Never log full UIDs; truncate to first 16 chars + "..."
@@ -250,15 +256,23 @@ def _build_template(
 
 def _build_source_datasets(source_volume: LoadedVolume) -> list[pydicom.Dataset]:
     """
-    Synthesise minimal per-slice pydicom Datasets for the source CT series.
+    Build minimal per-slice pydicom Datasets describing the source CT series.
 
     pydicom_seg's MultiClassWriter needs at minimum:
       - ImagePositionPatient  (to map each slice to the SimpleITK z-index)
       - FrameOfReferenceUID   (copied into the SEG via import_hierarchy)
       - StudyInstanceUID      (same)
       - SeriesInstanceUID     (goes into ReferencedSeriesSequence)
-      - SOPInstanceUID        (per-frame reference)
+      - SOPInstanceUID        (per-frame source-instance reference)
       - SOPClassUID           (CT Image Storage = 1.2.840.10008.5.1.4.1.1.2)
+
+    SOPInstanceUID per slice is taken from
+    ``source_volume.source_sop_instance_uids`` — the REAL SOPInstanceUID of
+    the instance stored in Orthanc, not a freshly generated one. The SEG's
+    per-frame DerivationImageSequence/SourceImageSequence must reference
+    instances that actually exist in the PACS (plan P4.2); a fabricated UID
+    there would silently produce a structurally-valid but unresolvable SEG.
+    ``write_dicom_seg`` validates the length before this function is called.
 
     We reconstruct slice positions from origin_mm + index * spacing_mm[0].
     The direction normal vector (elements 6-8) gives the z-step direction.
@@ -296,17 +310,32 @@ def _build_source_datasets(source_volume: LoadedVolume) -> list[pydicom.Dataset]
 
     source_datasets: list[pydicom.Dataset] = []
     for idx in range(num_slices):
+        sop_uid = source_volume.source_sop_instance_uids[idx]
+
         ds = pydicom.Dataset()
         ds.file_meta = pydicom.dataset.FileMetaDataset()
         ds.file_meta.TransferSyntaxUID = pydicom.uid.ExplicitVRLittleEndian
         ds.file_meta.MediaStorageSOPClassUID = "1.2.840.10008.5.1.4.1.1.2"  # CT
+        ds.file_meta.MediaStorageSOPInstanceUID = sop_uid
 
         ds.SOPClassUID = "1.2.840.10008.5.1.4.1.1.2"  # CT Image Storage
-        ds.SOPInstanceUID = pydicom.uid.generate_uid()
+        ds.SOPInstanceUID = sop_uid
         ds.StudyInstanceUID = source_volume.study_instance_uid
         ds.SeriesInstanceUID = source_volume.series_instance_uid
         ds.FrameOfReferenceUID = source_volume.frame_of_reference_uid
         ds.Modality = "CT"
+
+        # Patient module — without this, Orthanc (which keys a study's
+        # identity on PatientID+StudyInstanceUID together, not
+        # StudyInstanceUID alone) silently splits the derived SEG into a
+        # SECOND study resource sharing the source's StudyInstanceUID,
+        # breaking QIDO study listing (duplicate rows) for every viewer.
+        # PHI: values pass through unmodified, never logged (see
+        # dicom_loader.LoadedVolume docstring).
+        ds.PatientID = source_volume.patient_id
+        ds.PatientName = source_volume.patient_name
+        ds.PatientBirthDate = source_volume.patient_birth_date
+        ds.PatientSex = source_volume.patient_sex
 
         # Compute the patient-space origin of this slice
         pos_x = origin_x + idx * dz * normal_x
@@ -394,6 +423,18 @@ def _fix_uids_and_metadata(
     # FrameOfReferenceUID MUST equal source — critical for OHIF overlay alignment
     seg_ds.FrameOfReferenceUID = source_volume.frame_of_reference_uid
 
+    # Patient module MUST equal source — set explicitly here rather than
+    # relying on pydicom_seg to copy it through from source_datasets: a SEG
+    # missing PatientID lands in a SEPARATE Orthanc study resource sharing
+    # the same StudyInstanceUID (Orthanc keys study identity on
+    # PatientID+StudyInstanceUID together), which breaks QIDO study listing
+    # for every viewer (plan P4.2). PHI: values pass through unmodified,
+    # never logged.
+    seg_ds.PatientID = source_volume.patient_id
+    seg_ds.PatientName = source_volume.patient_name
+    seg_ds.PatientBirthDate = source_volume.patient_birth_date
+    seg_ds.PatientSex = source_volume.patient_sex
+
     # SeriesNumber: large offset ensures SEG appears after CT in ordered viewers
     seg_ds.SeriesNumber = 9000 + class_index
 
@@ -479,6 +520,14 @@ def write_dicom_seg(
         )
 
     volume_shape = source_volume.pixel_array.shape
+
+    if len(source_volume.source_sop_instance_uids) != volume_shape[0]:
+        raise SegWriterError(
+            "source_volume.source_sop_instance_uids has "
+            f"{len(source_volume.source_sop_instance_uids)} entries but the "
+            f"volume has {volume_shape[0]} slices — cannot build correct "
+            "per-frame source-instance references for DICOM SEG"
+        )
     log.info(
         "Building DICOM SEG for %d class(es), volume shape=%s",
         len(masks_by_class),

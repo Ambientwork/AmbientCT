@@ -367,3 +367,114 @@ async def test_stow_rs_network_error_raises_orthanc_network_error() -> None:
     async with _make_client(handler) as client:
         with pytest.raises(OrthancNetworkError):
             await client.stow_rs_post(b"\x00" * 8, study_uid=STUDY_UID)
+
+
+# ── STOW-RS bounded retries (plan P4.3) ─────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_stow_rs_retries_network_error_then_succeeds() -> None:
+    """A transient ConnectError on the first attempt is retried; a
+    successful second attempt returns normally with no exception."""
+    calls = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise httpx.ConnectError("Connection refused")
+        return _json_response(_stow_success_response())
+
+    async with _make_client(handler) as client:
+        result = await client.stow_rs_post(b"\x00" * 8, study_uid=STUDY_UID)
+
+    assert result == _stow_success_response()
+    assert calls["n"] == 2
+
+
+@pytest.mark.asyncio
+async def test_stow_rs_retries_5xx_then_succeeds() -> None:
+    """A transient 503 on the first attempt is retried; a successful second
+    attempt returns normally with no exception."""
+    calls = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return httpx.Response(status_code=503, content=b"Service Unavailable")
+        return _json_response(_stow_success_response())
+
+    async with _make_client(handler) as client:
+        result = await client.stow_rs_post(b"\x00" * 8, study_uid=STUDY_UID)
+
+    assert result == _stow_success_response()
+    assert calls["n"] == 2
+
+
+@pytest.mark.asyncio
+async def test_stow_rs_gives_up_after_max_attempts() -> None:
+    """An always-failing transient error is retried a bounded number of
+    times, then the last exception is raised — never an infinite loop."""
+    calls = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls["n"] += 1
+        raise httpx.ConnectError("Connection refused")
+
+    async with _make_client(handler) as client:
+        with pytest.raises(OrthancNetworkError):
+            await client.stow_rs_post(b"\x00" * 8, study_uid=STUDY_UID)
+
+    assert calls["n"] == 3, "expected exactly 1 initial attempt + 2 retries"
+
+
+@pytest.mark.asyncio
+async def test_stow_rs_does_not_retry_4xx() -> None:
+    """A 4xx (permanent, not transient) is raised on the first attempt —
+    never retried, since retrying would not change Orthanc's answer."""
+    calls = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls["n"] += 1
+        return httpx.Response(status_code=422, content=b"Unprocessable Entity")
+
+    async with _make_client(handler) as client:
+        with pytest.raises(OrthancClientError):
+            await client.stow_rs_post(b"\x00" * 8, study_uid=STUDY_UID)
+
+    assert calls["n"] == 1
+
+
+@pytest.mark.asyncio
+async def test_stow_rs_does_not_retry_failed_sop_sequence() -> None:
+    """StowRsRejected (application-level rejection, not transient) is raised
+    on the first attempt — never retried."""
+    calls = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls["n"] += 1
+        return _json_response(_stow_failed_response(), status=200)
+
+    async with _make_client(handler) as client:
+        with pytest.raises(StowRsRejected):
+            await client.stow_rs_post(b"\x00" * 8, study_uid=STUDY_UID)
+
+    assert calls["n"] == 1
+
+
+@pytest.mark.asyncio
+async def test_stow_rs_post_never_logs_full_study_uid(caplog) -> None:
+    """PHI-safe logging (plan P4.3): the full StudyInstanceUID must never
+    appear in a STOW-RS log line, only a truncated form."""
+    import logging as _logging
+
+    caplog.set_level(_logging.DEBUG, logger="ai-inference.orthanc")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return _json_response(_stow_success_response())
+
+    long_study_uid = "1.2.840.10008.5.1.4.1.1.2.9999.LONG.STUDY.UID.VALUE"
+    async with _make_client(handler) as client:
+        await client.stow_rs_post(b"\x00" * 8, study_uid=long_study_uid)
+
+    for record in caplog.records:
+        assert long_study_uid not in record.getMessage()

@@ -57,6 +57,8 @@ def _make_instance(
     series_uid: str = SERIES_UID,
     for_uid: str = FOR_UID,
     pixel_value: int = 0,
+    patient_id: str = "SN-PHANTOM-001",
+    patient_name: str = "PHANTOM^DENTAL^CBCT",
 ) -> bytes:
     """
     Synthesise a minimal DICOM dataset and return its bytes.
@@ -77,6 +79,8 @@ def _make_instance(
     ds.SeriesInstanceUID = series_uid
     ds.FrameOfReferenceUID = for_uid
     ds.InstanceNumber = "1"
+    ds.PatientID = patient_id
+    ds.PatientName = patient_name
 
     ds.ImagePositionPatient = [0.0, 0.0, z_pos]
     ds.ImageOrientationPatient = [1.0, 0.0, 0.0, 0.0, 1.0, 0.0]
@@ -189,6 +193,15 @@ async def test_load_volume_stacks_correctly() -> None:
     assert abs(vol.spacing_mm[0] - 1.0) < 0.01
     assert abs(vol.spacing_mm[1] - 0.4) < 0.01
     assert abs(vol.spacing_mm[2] - 0.4) < 0.01
+    # source_sop_instance_uids (plan P4.1): one entry per slice, in the same
+    # ascending-Z order as pixel_array — index i must reference the SOP UID
+    # of the instance that produced pixel_array[i].
+    assert vol.source_sop_instance_uids == ("sop.1", "sop.2", "sop.3")
+    # Patient module (plan P4.2): extracted so a derived SEG can carry the
+    # same PatientID as its source — see LoadedVolume docstring for why a
+    # missing PatientID breaks Orthanc's study identity.
+    assert vol.patient_id == "SN-PHANTOM-001"
+    assert vol.patient_name == "PHANTOM^DENTAL^CBCT"
 
 
 @pytest.mark.asyncio
@@ -208,6 +221,10 @@ async def test_load_volume_slices_sorted_by_z() -> None:
     assert int(vol.pixel_array[0, 0, 0]) == 10
     assert int(vol.pixel_array[1, 0, 0]) == 20
     assert int(vol.pixel_array[2, 0, 0]) == 30
+    # source_sop_instance_uids must be re-ordered by the same z-sort, NOT
+    # left in the fetch/arrival order — index i must still reference the SOP
+    # UID of the instance that produced pixel_array[i] (plan P4.1).
+    assert vol.source_sop_instance_uids == ("sop.z1", "sop.z2", "sop.z3")
 
 
 @pytest.mark.asyncio
@@ -238,6 +255,43 @@ async def test_inconsistent_frame_of_reference_raises() -> None:
 
     with pytest.raises(VolumeLoadError, match="Inconsistent FrameOfReferenceUID"):
         await load_volume_from_orthanc(client, STUDY_UID)
+
+
+@pytest.mark.asyncio
+async def test_load_volume_anisotropic_spacing() -> None:
+    """
+    Plan P4.1: the geometry contract must handle anisotropic series — distinct
+    dZ, dY, dX — without swapping or averaging axes. Uses non-square
+    PixelSpacing (dY != dX) plus a Z-step distinct from both, and asserts all
+    three spacing_mm components exactly, individually.
+    """
+    instances = [
+        ("sop.a1", _make_instance("sop.a1", z_pos=0.0, pixel_value=1)),
+        ("sop.a2", _make_instance("sop.a2", z_pos=2.0, pixel_value=2)),
+        ("sop.a3", _make_instance("sop.a3", z_pos=4.0, pixel_value=3)),
+    ]
+    # Override PixelSpacing on the synthesised instances to be non-square
+    # (row spacing 0.3 mm, column spacing 0.6 mm) — _make_instance's default
+    # helper always uses square 0.4/0.4, so patch the bytes directly here.
+    patched = []
+    for sop, raw in instances:
+        ds = pydicom.dcmread(io.BytesIO(raw), force=True)
+        ds.PixelSpacing = [0.3, 0.6]
+        buf = io.BytesIO()
+        pydicom.dcmwrite(buf, ds)
+        patched.append((sop, buf.getvalue()))
+
+    client = _make_fake_client(patched)
+
+    vol = await load_volume_from_orthanc(client, STUDY_UID)
+
+    # dZ = 2.0 mm (from ImagePositionPatient step), dY = 0.3 mm, dX = 0.6 mm —
+    # all three distinct, none swapped or collapsed to an average.
+    assert abs(vol.spacing_mm[0] - 2.0) < 0.01, "dZ mismatch"
+    assert abs(vol.spacing_mm[1] - 0.3) < 0.01, "dY mismatch"
+    assert abs(vol.spacing_mm[2] - 0.6) < 0.01, "dX mismatch"
+    assert vol.pixel_array.shape == (3, 5, 5)
+    assert vol.source_sop_instance_uids == ("sop.a1", "sop.a2", "sop.a3")
 
 
 @pytest.mark.asyncio
