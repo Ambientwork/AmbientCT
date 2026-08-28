@@ -20,7 +20,7 @@ interface DentalMPRDiffViewportProps {
   /** Diff-scale half-range in HU ("compareOpacity"/diffWindow, plan §10 P3.4). */
   diffWindowHU?: number;
   onDiffWindowChange?: (diffWindowHU: number) => void;
-  /** Total volume-load time budget before showing a retryable error. Default 20s. */
+  /** Total volume-load time budget before showing a retryable error. Default 45s. */
   pollTimeoutMs?: number;
 }
 

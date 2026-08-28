@@ -86,6 +86,22 @@ export function extractVolumeGeometry(volume: any): VolumeGeometry | null {
     return null;
   }
 
+  // direction/frameOfReferenceUID/rescale* can legitimately be undefined here
+  // (this function must never throw or invent a value) — but that does NOT
+  // mean checkVolumeGeometryCompatibility (geometryCompat.ts) treats all
+  // three the same way once it receives them:
+  //   - direction: vtkImageData.getDirection() always returns a 9-value
+  //     matrix (identity default), so this is effectively never undefined.
+  //   - frameOfReferenceUID: cornerstone3D populates volume.metadata from
+  //     the series' DICOM metadata at volume-creation time, before pixel
+  //     data streams in, so it is reliably present by the time this
+  //     function is called (gated on isVolumeReady() — see caller). A
+  //     missing value here means the series genuinely lacks the tag, not
+  //     that it hasn't loaded yet — geometryCompat.ts treats that as
+  //     incompatible, not as a skip.
+  //   - rescaleSlope/rescaleIntercept: legitimately absent per DICOM
+  //     PS3.3 C.11.1 (default slope=1/intercept=0) — geometryCompat.ts
+  //     defaults them rather than erroring, which is correct, not a gap.
   return {
     dimensions: [dims[0], dims[1], dims[2]],
     spacing: [spacing[0], spacing[1], spacing[2]],

@@ -225,7 +225,11 @@ export default function DentalContainerViewport(props: any) {
           } else if (status.status === 'error') {
             clearInterval(marPollRef.current!);
             setMarStatus('error');
-            console.error('[MAR] Verarbeitung fehlgeschlagen:', status.error);
+            // PHI-safe: never log status.error verbatim — mar-processor sets
+            // it to str(exc), which can embed file paths, DICOM tag values,
+            // or other exception detail. jobId is a non-PHI correlation id
+            // an operator can grep mar-processor's job store/logs with.
+            console.error('[MAR] Verarbeitung fehlgeschlagen. Job-ID:', jobId);
           }
         } catch (e) {
           console.warn('[MAR] Polling-Fehler:', e);

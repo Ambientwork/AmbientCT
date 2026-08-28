@@ -68,6 +68,10 @@ export function checkVolumeGeometryCompatibility(
     );
   }
 
+  // direction comes from vtkImageData.getDirection(), which always returns a
+  // 9-value matrix (identity when the source never set one explicitly) — so
+  // in practice this length guard is never the reason the check is skipped;
+  // it exists purely as a defensive type guard against a malformed caller.
   if (a.direction?.length === 9 && b.direction?.length === 9) {
     const dirDiff = maxAbsDiff(a.direction, b.direction);
     if (dirDiff > DIRECTION_TOLERANCE) {
@@ -78,14 +82,34 @@ export function checkVolumeGeometryCompatibility(
     }
   }
 
-  if (
-    a.frameOfReferenceUID &&
-    b.frameOfReferenceUID &&
-    a.frameOfReferenceUID !== b.frameOfReferenceUID
-  ) {
+  // FrameOfReferenceUID is read from volume.metadata (volumeLookup.ts), which
+  // cornerstone3D populates from the series' DICOM metadata at volume-creation
+  // time — before pixel data streams in — so it is reliably present by the
+  // time this gate runs (gated on isVolumeReady(), i.e. imageData already has
+  // sampleable points). mar-processor's _make_mar_dataset() deep-copies the
+  // source instance and only overrides Series/SOPInstanceUID, description,
+  // number and pixel data, so a MAR series always inherits its source's
+  // FrameOfReferenceUID unchanged. A missing value here therefore is not a
+  // transient loading state — it means the series' DICOM metadata itself
+  // lacks a FrameOfReferenceUID, which makes "same patient space" impossible
+  // to verify. Per plan P3.5 that must block the diff, not silently pass it:
+  // previously this check was skipped (return compatible) whenever either
+  // side was missing the tag instead of treated as incompatible.
+  if (!a.frameOfReferenceUID || !b.frameOfReferenceUID) {
+    return incompatible(
+      'FRAME_OF_REFERENCE_MISMATCH',
+      'FrameOfReferenceUID missing on one or both series — cannot verify shared patient space'
+    );
+  }
+  if (a.frameOfReferenceUID !== b.frameOfReferenceUID) {
     return incompatible('FRAME_OF_REFERENCE_MISMATCH', 'FrameOfReferenceUID differs between series');
   }
 
+  // RescaleSlope/RescaleIntercept absence is NOT a metadata-availability gap
+  // like FrameOfReferenceUID above — per DICOM PS3.3 C.11.1, an image
+  // without these optional tags is defined to have slope=1/intercept=0
+  // (identity rescale). Defaulting here implements that standard default,
+  // it does not paper over a missing check.
   const slopeA = a.rescaleSlope ?? 1;
   const slopeB = b.rescaleSlope ?? 1;
   const interceptA = a.rescaleIntercept ?? 0;

@@ -74,10 +74,20 @@ describe('checkVolumeGeometryCompatibility', () => {
     expect(result.reasonCode).toBe('FRAME_OF_REFERENCE_MISMATCH');
   });
 
-  test('FrameOfReferenceUID missing on one or both sides does not by itself block the diff', () => {
+  test('FrameOfReferenceUID missing on both sides is incompatible (cannot verify shared patient space)', () => {
     const a = baseGeometry({ frameOfReferenceUID: undefined });
     const b = baseGeometry({ frameOfReferenceUID: undefined });
-    expect(checkVolumeGeometryCompatibility(a, b).compatible).toBe(true);
+    const result = checkVolumeGeometryCompatibility(a, b);
+    expect(result.compatible).toBe(false);
+    expect(result.reasonCode).toBe('FRAME_OF_REFERENCE_MISMATCH');
+  });
+
+  test('FrameOfReferenceUID missing on only one side is incompatible', () => {
+    const a = baseGeometry({ frameOfReferenceUID: undefined });
+    const b = baseGeometry();
+    const result = checkVolumeGeometryCompatibility(a, b);
+    expect(result.compatible).toBe(false);
+    expect(result.reasonCode).toBe('FRAME_OF_REFERENCE_MISMATCH');
   });
 
   test('rescale slope/intercept mismatch is incompatible', () => {

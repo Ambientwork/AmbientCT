@@ -82,7 +82,7 @@ The service resolves one of three explicit modes on every health check and job s
 
 | Runtime-verified today (2026-08-28, isolated test stack) | Implemented but not yet runtime-verified | Intentionally out of scope for this repo |
 |---|---|---|
-| Demo job pipeline end-to-end: `queued → running → review_required`, findings clearly marked `isDemo=true` / `ambientct-mock-v0` | Real DentalSegmentator (nnU-Net) inference — code path is complete (correct volume spacing, `tile_step_size=0.9`, mirroring disabled, canal label from model metadata) but **no model weights have been downloaded**; status `pending_external_artifact` | Out-of-distribution detection (stub only) |
+| Demo job pipeline end-to-end: `queued → running → review_required`, findings clearly marked `isDemo=true` / `ambientct-mock-v0` | Real DentalSegmentator (nnU-Net) inference — code path is complete (correct volume spacing, `tile_step_size=0.9`, mirroring disabled, canal label defaults to `5`, hardcoded from the model's documented label scheme, not read from `dataset.json`; env-overridable via `AI_INFERENCE_CANAL_LABEL`) but **no model weights have been downloaded**; status `pending_external_artifact` | Out-of-distribution detection (stub only) |
 | Demo DICOM SEG write → Orthanc STOW-RS → re-read → all per-frame source-instance references validated against the real source series (0 fabricated references) | — | Persistence of MAR mapping / review state to Orthanc metadata (in-memory + localStorage only) |
 | Demo SEG persistence gated behind `AI_INFERENCE_PERSIST_DEMO_SEG` (default `false`; only enabled in the isolated `ambientct-test` stack) so nothing synthetic reaches a normal PACS instance by default | — | Structured report (DICOM SR) export |
 

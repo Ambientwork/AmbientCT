@@ -35,7 +35,7 @@ interface DentalMPRViewportProps {
   windowWidth?: number;
   windowCenter?: number;
   onWindowLevelChange?: (windowWidth: number, windowCenter: number) => void;
-  /** Total volume-load time budget before showing a retryable error. Default 20s. */
+  /** Total volume-load time budget before showing a retryable error. Default 45s. */
   pollTimeoutMs?: number;
 }
 

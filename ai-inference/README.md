@@ -178,7 +178,7 @@ See `.env.example` for the full, current, commented list. Summary:
 | `AI_INFERENCE_PERSIST_DEMO_SEG` | `false` | Whether a demo job's SEG is written to Orthanc (isolated test stack only). |
 | `AI_MODEL_PATH` | `/models/mandibular-canal/Dataset111_453CT_v100` | Path to the **unpacked** nnU-Net model folder inside the container — never the `.zip`. |
 | `AI_INFERENCE_DEVICE` | `cpu` | `cpu` (Docker default) or `mps` (native macOS dev only). |
-| `AI_INFERENCE_CANAL_LABEL` | `5` | nnU-Net label ID extracted as the mandibular canal — the model's own label metadata (1=maxilla, 2=mandible, 3=upper teeth, 4=lower teeth, 5=canal). A wrong value here does not fail loudly, it silently extracts the wrong anatomy. |
+| `AI_INFERENCE_CANAL_LABEL` | `5` (hardcoded `REAL_MODEL_CANAL_LABEL` in `pipeline/inference_mode.py`, **not** read from `dataset.json`) | nnU-Net label ID extracted as the mandibular canal, per the model's documented label scheme (1=maxilla, 2=mandible, 3=upper teeth, 4=lower teeth, 5=canal). Env-overridable. A wrong value here does not fail loudly, it silently extracts the wrong anatomy. |
 | `PYTORCH_ENABLE_MPS_FALLBACK` | `1` | Routes unsupported MPS ops to CPU when `AI_INFERENCE_DEVICE=mps`. |
 
 There is deliberately **no** `AI_INFERENCE_PATCH_SIZE` variable — nnU-Net's
