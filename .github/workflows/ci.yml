@@ -28,6 +28,12 @@ jobs:
           cp .env.example .env
           docker compose config --quiet
 
+      - name: Validate docker-compose.yml with isolated test override
+        run: |
+          docker compose -p ambientct-test \
+            -f docker-compose.yml -f docker-compose.test.yml \
+            config --quiet
+
       - name: Validate Orthanc config JSON
         run: python3 -c "import json; json.load(open('config/orthanc.json'))"
 
@@ -95,3 +101,96 @@ jobs:
       - name: Teardown
         if: always()
         run: docker compose down -v
+
+  ai-python-tests:
+    name: AI Inference Unit Tests (Docker test stage)
+    runs-on: ubuntu-latest
+    needs: lint
+    steps:
+      - uses: actions/checkout@v4
+
+      # Reproducible Python 3.11 test environment (plan §9 P2.1): the test
+      # stage installs requirements.txt + requirements-dev.txt and runs in
+      # explicit demo mode, so no real model weights or DICOM data are
+      # needed. Real-model tests are a separate, optional category (see the
+      # `real_model` pytest marker in ai-inference/pytest.ini) and are never
+      # part of this job — none exist yet (Track B / P5-P6); a future
+      # real-model test must be skipped explicitly, never silently reported
+      # as a passed real-model validation.
+      - name: Build ai-inference test image
+        run: docker build --target test -t ambientct/ai-inference:test ai-inference/
+
+      - name: Run AI inference unit tests
+        run: docker run --rm ambientct/ai-inference:test
+
+  isolated-stack-smoke:
+    name: Isolated Demo Smoke (ambientct-test stack)
+    runs-on: ubuntu-latest
+    needs: lint
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Create .env from example
+        run: cp .env.example .env
+
+      # ambientct-test is a distinct compose project (own containers, ports,
+      # network, and named Orthanc volume — see docker-compose.test.yml). On
+      # a GitHub Actions runner there is no pre-existing AmbientCT stack to
+      # protect, but this exercises the exact isolated-stack harness used
+      # locally, with demo-mode AI and no real model weights or DICOM data.
+      - name: Start isolated test stack
+        run: |
+          docker compose -p ambientct-test \
+            -f docker-compose.yml -f docker-compose.test.yml \
+            up -d
+
+      - name: Wait for isolated Orthanc healthy
+        run: |
+          for i in $(seq 1 60); do
+            STATUS=$(docker inspect --format='{{.State.Health.Status}}' ambientct-test-orthanc 2>/dev/null || echo "starting")
+            if [ "$STATUS" = "healthy" ]; then
+              echo "Isolated Orthanc is healthy after ~${i}s"
+              break
+            fi
+            if [ "$i" -eq 60 ]; then
+              echo "Timeout waiting for isolated Orthanc"
+              docker compose -p ambientct-test -f docker-compose.yml -f docker-compose.test.yml logs orthanc
+              exit 1
+            fi
+            sleep 1
+          done
+
+      - name: Wait for isolated viewer
+        run: |
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:3100 > /dev/null 2>&1; then
+              echo "Isolated viewer is up after ~${i}s"
+              break
+            fi
+            if [ "$i" -eq 30 ]; then
+              echo "Timeout waiting for isolated viewer"
+              docker compose -p ambientct-test -f docker-compose.yml -f docker-compose.test.yml logs viewer
+              exit 1
+            fi
+            sleep 1
+          done
+
+      - name: Check demo AI health via viewer proxy
+        run: |
+          curl -fsS http://localhost:3100/api/ai/health | tee /tmp/ai-health.json
+          MODE=$(jq -r '.mode' /tmp/ai-health.json)
+          if [ "$MODE" != "demo" ]; then
+            echo "Expected AI mode=demo, got: $MODE"
+            exit 1
+          fi
+
+      - name: Collect logs on failure
+        if: failure()
+        run: docker compose -p ambientct-test -f docker-compose.yml -f docker-compose.test.yml logs > /tmp/isolated-stack-logs.txt 2>&1
+
+      - name: Teardown isolated stack (ambientct-test project only)
+        if: always()
+        run: |
+          docker compose -p ambientct-test \
+            -f docker-compose.yml -f docker-compose.test.yml \
+            down -v

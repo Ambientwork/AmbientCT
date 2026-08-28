@@ -7,7 +7,12 @@ const { test, expect } = require('playwright/test');
 const fs = require('fs');
 const path = require('path');
 
-const BASE_URL = process.env.BASE_URL || 'http://host.docker.internal:3000';
+// host.docker.internal does not resolve when Playwright runs on the host
+// itself (only from inside a Linux container) — default to plain localhost.
+// This spec is read-only (no Orthanc mutation), so the default AmbientCT
+// viewer port is fine; override BASE_URL to point at the isolated test
+// stack (http://localhost:3100) or a containerized runner as needed.
+const BASE_URL = process.env.BASE_URL || 'http://localhost:3000';
 const SCREENSHOT_DIR = 'test-results/ai-assist';
 
 fs.mkdirSync(SCREENSHOT_DIR, { recursive: true });

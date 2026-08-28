@@ -1,28 +1,121 @@
-FROM python:3.11-slim-bookworm
+# syntax=docker/dockerfile:1
+# =============================================================================
+# AmbientCT ai-inference — Multi-stage Dockerfile (Phase 3b-2)
+#
+# Stage 1 (builder): compiles/installs all production Python deps into ~/.local
+# Stage 2 (test):    independent, lightweight unit-test environment (P2.1) —
+#                     not built FROM builder, not used by runtime
+# Stage 3 (runtime):  copies builder's installed packages — no build tools
+#
+# Hardware target: Apple Silicon M4 Mac mini, 8 GB container limit.
+#   PYTORCH_ENABLE_MPS_FALLBACK=1 routes unsupported MPS ops to CPU.
+#   No CUDA; torch CPU/MPS only.
+#
+# Image size: ~2.5–3 GB (builder discards build-essential, keeps torch + nnunet)
+# =============================================================================
 
-WORKDIR /app
+# ── Stage 1: dependency builder ───────────────────────────────────────────────
+FROM python:3.11-slim-bookworm AS builder
 
-# OpenCV headless braucht libGL + libglib.
-# Pinned auf Bookworm (Debian 12), weil Trixie (Debian 13) das alte
-# libgl1-mesa-glx-Paket entfernt hat — dort heisst es nur noch libgl1.
-# Wenn das Base-Image später auf Trixie wechselt: libgl1-mesa-glx → libgl1.
+# build-essential: needed to compile C extensions (acvl-utils, scikit-learn, etc.)
+# libgl1-mesa-glx / libglib2.0-0: OpenCV headless runtime (also needed at build)
+# NOTE: Bookworm (Debian 12) still has libgl1-mesa-glx.
+#       If base image moves to Trixie (Debian 13), replace with libgl1.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    libgl1-mesa-glx \
+    libglib2.0-0 \
+ && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /build
+
+COPY requirements.txt .
+
+# --user installs into /root/.local so it can be COPY'd to the runtime stage
+# --no-cache-dir keeps layer size down
+RUN pip install --user --no-cache-dir -r requirements.txt
+
+
+# ── Stage 2: test image (P2.1) ────────────────────────────────────────────────
+# Reproducible Python 3.11 unit-test environment. NOT built FROM builder and
+# NOT referenced by the runtime stage below, so `docker build` (no --target,
+# or --target runtime) never builds this stage and the production image
+# stays pytest-free.
+#
+#   docker build --target test -t ambientct/ai-inference:test ai-inference/
+#   docker run --rm ambientct/ai-inference:test
+#
+# Uses requirements-test.txt, NOT requirements.txt + requirements-dev.txt:
+# requirements.txt pins numpy==2.2.0 for nnunetv2==2.5.1, which conflicts
+# with pydicom-seg==0.4.1's numpy<2.0.0 constraint (confirmed unresolvable
+# by both pip and uv; pre-existing, not introduced here). The unit test
+# suite never imports torch/torchvision/nnunetv2 at collection time (they
+# are lazily imported only inside pipeline/segmentation.py's real-inference
+# code paths — see requirements-test.txt for the full explanation and the
+# `real_model` pytest marker for the test category this stage does not
+# cover). This stage must never be reported as a passed real-model gate.
+#
+# No real model weights are required or expected: AI_INFERENCE_DEMO_MODE=true
+# is set explicitly below so resolve_inference_mode() always resolves to the
+# synthetic demo predictor inside this image, matching plan §9 P2.1. Test
+# files also override env vars locally per-test via tests/conftest.py.
+FROM python:3.11-slim-bookworm AS test
+
+# libgl1-mesa-glx / libglib2.0-0: SimpleITK runtime deps (same as runtime stage)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libgl1-mesa-glx \
     libglib2.0-0 \
  && rm -rf /var/lib/apt/lists/*
 
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+WORKDIR /app
+
+COPY requirements-test.txt .
+RUN pip install --no-cache-dir -r requirements-test.txt
 
 COPY . .
 
-# Non-root user für Security
-RUN useradd -m -u 1000 aiuser
+ENV PYTHONPATH=/app \
+    AI_INFERENCE_DEMO_MODE=true \
+    AI_INFERENCE_PERSIST_DEMO_SEG=false \
+    PYTORCH_ENABLE_MPS_FALLBACK=1
+
+CMD ["pytest", "tests", "-q"]
+
+
+# ── Stage 3: runtime image ────────────────────────────────────────────────────
+FROM python:3.11-slim-bookworm
+
+# Runtime-only native libs (no build-essential — that stays in builder)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libgl1-mesa-glx \
+    libglib2.0-0 \
+ && rm -rf /var/lib/apt/lists/* \
+ && useradd -m -u 1000 aiuser
+
+WORKDIR /app
+
+# Pull installed packages from builder
+COPY --from=builder /root/.local /home/aiuser/.local
+
+ENV PATH=/home/aiuser/.local/bin:$PATH \
+    PYTHONPATH=/home/aiuser/.local/lib/python3.11/site-packages \
+    # Apple Silicon: fall back unsupported MPS ops to CPU automatically
+    PYTORCH_ENABLE_MPS_FALLBACK=1 \
+    # nnU-Net environment variables (paths overridable via docker-compose.yml)
+    nnUNet_raw=/tmp/nnunet_raw \
+    nnUNet_preprocessed=/tmp/nnunet_preprocessed \
+    nnUNet_results=/tmp/nnunet_results
+
+# Copy application source (owned by aiuser for security)
+COPY --chown=aiuser:aiuser . .
+
 USER aiuser
 
 EXPOSE 8000
 
-HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+# Liveness probe: hits the /api/ai/health endpoint.
+# start-period=60s because torch + nnunet model loading takes time on first start.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
   CMD python -c "import urllib.request as r; r.urlopen('http://localhost:8000/api/ai/health', timeout=3)" || exit 1
 
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]

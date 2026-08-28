@@ -1,0 +1,94 @@
+# =============================================================================
+# docker-compose.test.yml — isolated integration-test stack override (P2.2)
+# =============================================================================
+#
+# ALWAYS combine with docker-compose.yml AND pass -p ambientct-test explicitly.
+# Never run this file's `down -v` without the -p flag — see docs/TESTING.md.
+#
+#   Start:    docker compose -p ambientct-test \
+#               -f docker-compose.yml -f docker-compose.test.yml up -d
+#   Teardown: docker compose -p ambientct-test \
+#               -f docker-compose.yml -f docker-compose.test.yml down -v
+#
+# Isolation guarantees (verify with `docker compose ps` / `docker volume ls`
+# before and after any test run):
+#   - Every container gets an explicit ambientct-test-* name so this stack can
+#     run alongside the main AmbientCT stack (ambientct-orthanc, ambientct-
+#     viewer, ambientct-mar, ambientct-ai-inference) without name collisions.
+#   - Distinct host ports: viewer 3100, orthanc 8142 (HTTP) / 4342 (DICOM),
+#     mar-processor 8100. None of these overlap the production ports
+#     (3000/3443, 8042/4242, 8000).
+#   - Its own explicitly named Orthanc volume, ambientct-test-orthanc-db —
+#     NEVER the production ambientct_orthanc-db volume.
+#   - Demo AI mode with demo-SEG persistence enabled ONLY in this override,
+#     so the DICOM SEG write/STOW/roundtrip path can be exercised end-to-end
+#     with synthetic data only, isolated from the production PACS.
+#   - Deterministic, local-only Orthanc credentials used ONLY by this stack
+#     (never reused by the production .env).
+#
+# `down -v` deletes named volumes for the CURRENT compose project only. As
+# long as -p ambientct-test is on the command line, that is exclusively the
+# ambientct-test-orthanc-db volume declared below — it can never remove the
+# production ambientct_orthanc-db volume, which does not belong to this
+# project and is not declared in this file.
+
+services:
+  orthanc:
+    container_name: ambientct-test-orthanc
+    # !override replaces the base file's ports list instead of merging into
+    # it (Compose's default list merge is a union) — without this, the
+    # isolated stack would ALSO try to publish the production ports
+    # 8042/4242 and collide with the already-running main stack.
+    ports: !override
+      - "8142:8042"
+      - "4342:4242"
+    environment:
+      ORTHANC_USER: "ambientct-test"
+      ORTHANC_PASSWORD: "ambientct-test-only-local"
+      # docker-compose.yml's ORTHANC__REGISTERED_USERS is a string built via
+      # ${ORTHANC_USER}/${ORTHANC_PASSWORD} interpolation from the host's
+      # .env at config-parse time — NOT from this environment map. Without
+      # this explicit literal override, Orthanc would register the
+      # PRODUCTION .env credentials while every other service in this file
+      # authenticates with the test credentials above, so every request
+      # (including the healthcheck) would get 401'd and the isolated stack
+      # would hang forever waiting for orthanc to become healthy.
+      ORTHANC__REGISTERED_USERS: '{"ambientct-test": "ambientct-test-only-local"}'
+    volumes:
+      - orthanc-db:/var/lib/orthanc/db
+      - ./config/orthanc.json:/etc/orthanc/orthanc.json:ro
+
+  viewer:
+    container_name: ambientct-test-viewer
+    ports: !override
+      - "3100:80"
+      - "3543:443"
+    environment:
+      ORTHANC_USER: "ambientct-test"
+      ORTHANC_PASSWORD: "ambientct-test-only-local"
+
+  mar-processor:
+    container_name: ambientct-test-mar
+    ports: !override
+      - "8100:8000"
+    environment:
+      ORTHANC_USER: "ambientct-test"
+      ORTHANC_PASSWORD: "ambientct-test-only-local"
+
+  ai-inference:
+    container_name: ambientct-test-ai-inference
+    environment:
+      ORTHANC_USER: "ambientct-test"
+      ORTHANC_PASSWORD: "ambientct-test-only-local"
+      # Explicit demo mode for the isolated stack — no real model weights
+      # required. See ai-inference/pipeline/inference_mode.py.
+      AI_INFERENCE_DEMO_MODE: "true"
+      # ONLY this isolated test stack persists demo SEGs to Orthanc, so the
+      # full write/STOW/roundtrip path is exercisable without ever writing
+      # synthetic data into the production PACS instance (default: false
+      # everywhere else, per docker-compose.yml / .env.example).
+      AI_INFERENCE_PERSIST_DEMO_SEG: "true"
+
+volumes:
+  orthanc-db:
+    name: ambientct-test-orthanc-db
