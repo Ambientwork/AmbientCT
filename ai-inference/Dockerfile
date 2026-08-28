@@ -46,14 +46,14 @@ RUN pip install --user --no-cache-dir -r requirements.txt
 #   docker run --rm ambientct/ai-inference:test
 #
 # Uses requirements-test.txt, NOT requirements.txt + requirements-dev.txt:
-# requirements.txt pins numpy==2.2.0 for nnunetv2==2.5.1, which conflicts
-# with pydicom-seg==0.4.1's numpy<2.0.0 constraint (confirmed unresolvable
-# by both pip and uv; pre-existing, not introduced here). The unit test
-# suite never imports torch/torchvision/nnunetv2 at collection time (they
-# are lazily imported only inside pipeline/segmentation.py's real-inference
-# code paths — see requirements-test.txt for the full explanation and the
-# `real_model` pytest marker for the test category this stage does not
-# cover). This stage must never be reported as a passed real-model gate.
+# torch/torchvision/nnunetv2 are heavy and the unit test suite never
+# imports them at collection time (they are lazily imported only inside
+# pipeline/segmentation.py's real-inference code paths — see
+# requirements-test.txt for the full explanation and the `real_model`
+# pytest marker for the test category this stage does not cover).
+# requirements-test.txt pins the same numpy==1.26.4 as requirements.txt so
+# this stage stays production-representative. This stage must never be
+# reported as a passed real-model gate.
 #
 # No real model weights are required or expected: AI_INFERENCE_DEMO_MODE=true
 # is set explicitly below so resolve_inference_mode() always resolves to the

@@ -1,11 +1,40 @@
-# Phase 3b-1 runtime dependencies — no torch/nnunetv2/simpleitk (those come in Phase 3b-2)
+# Phase 3b-2 runtime dependencies
+# ─────────────────────────────────────────────────────────────────────────────
+# numpy: nnunetv2==2.5.1's pyproject.toml declares a bare "numpy" (no version
+#   bound at all — verified via `pip download --no-deps nnunetv2==2.5.1` and
+#   inspecting pyproject.toml). pydicom-seg==0.4.1 declares
+#   numpy>=1.18.0,<2.0.0 (verified via its wheel METADATA), which is the
+#   binding constraint. 1.26.4 is the last numpy 1.x release, has cp311
+#   manylinux/macOS wheels, and satisfies every other transitive numpy user
+#   in this file (torch, scikit-image>=1.24, batchgenerators>=1.10.2,
+#   acvl-utils, dynamic-network-architectures, batchgeneratorsv2 — none of
+#   which require numpy>=2). Pinned exact for reproducibility.
+numpy==1.26.4
+
 fastapi==0.115.5
 uvicorn[standard]==0.32.1
 pydantic==2.10.3
 pydicom==3.0.1
 httpx==0.28.1
 python-multipart==0.0.20
-numpy==2.2.0
+
+# ── Phase 3b-2 additions ─────────────────────────────────────────────────────
+# PyTorch: CPU-only wheel (no CUDA).  Apple MPS is accessed via the standard
+#   torch package; PYTORCH_ENABLE_MPS_FALLBACK=1 covers unsupported ops.
+torch==2.5.1
+torchvision==0.20.1
+
+# nnU-Net v2 — self-configuring segmentation framework
+nnunetv2==2.5.1
+
+# Medical image I/O (DICOM/NIfTI/MetaImage) used by normalize.py + quality_check.py
+SimpleITK==2.4.0
+
+# DICOM SEG writer (Agent C: orthanc_writer.py, seg_writer.py)
+pydicom-seg==0.4.1
+
+# Memory guard — used by pipeline/segmentation.py to enforce 8 GB container cap
+psutil==6.1.0
 
 # Dev / test — install with: pip install -r requirements.txt -r requirements-dev.txt
 # (kept separate so the Docker image stays lean)

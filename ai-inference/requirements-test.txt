@@ -3,32 +3,26 @@
 # Tests einen zweiten leichten Requirements-Satz verwenden").
 #
 # Why this file exists (not just requirements.txt + requirements-dev.txt):
-# requirements.txt pins numpy==2.2.0 for nnunetv2==2.5.1, but
-# pydicom-seg==0.4.1 requires numpy<2.0.0 — pip (and uv) both report this
-# as an unresolvable conflict when torch/torchvision/nnunetv2 and
-# pydicom-seg are installed together. This conflict pre-exists in
-# requirements.txt (not introduced by this phase) and is NOT fixed here:
-# requirements.txt's "do NOT downgrade" numpy pin is an explicit prior
-# decision for real nnU-Net inference correctness, out of scope for the
-# test harness.
+# torch/torchvision/nnunetv2 are heavy (CPU wheel download alone is
+# hundreds of MB) and the unit test suite (ai-inference/tests/) never
+# imports them at collection time — verified by grepping pipeline/*.py:
+# `import torch` and the nnU-Net predictor import live inside
+# pipeline/segmentation.py function bodies (lazy, real-inference-only code
+# paths), not at module scope. No current test exercises those paths (see
+# the `real_model` marker in pytest.ini for the category reserved for when
+# they are). Skipping them keeps this stage fast to build.
 #
-# This is safe because the unit test suite (ai-inference/tests/) never
-# imports torch, torchvision, or nnunetv2 at collection time — verified by
-# grepping pipeline/*.py: both `import torch` and the nnU-Net predictor
-# import live inside pipeline/segmentation.py function bodies (lazy,
-# real-inference-only code paths), not at module scope. No current test
-# exercises those paths (see the `real_model` marker in pytest.ini for the
-# category reserved for when they are).
+# numpy==1.26.4 pinned to match requirements.txt exactly (both are bound
+# by pydicom-seg==0.4.1's numpy>=1.18.0,<2.0.0), so this stage exercises a
+# production-representative numpy major/version, not just a coincidentally
+# compatible one.
 #
 # Consequence: this test stage does NOT install and does NOT exercise
 # torch/nnunetv2/real inference. It must never be reported as a passed
 # real-model or real-inference validation — only as what it is: the
 # reproducible unit-test environment for demo-mode / mocked-predictor
 # code paths.
-#
-# numpy left unpinned (any pin here would just re-create the same
-# conflict) — pip resolves it to a <2.0 release that satisfies
-# pydicom-seg==0.4.1.
+numpy==1.26.4
 fastapi==0.115.5
 uvicorn[standard]==0.32.1
 pydantic==2.10.3

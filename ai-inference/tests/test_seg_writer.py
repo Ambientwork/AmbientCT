@@ -452,6 +452,10 @@ def test_write_default_is_not_marked_as_demo() -> None:
 
     seg_ds = pydicom.dcmread(io.BytesIO(results[0].dicom_bytes))
     assert "DEMO" not in str(seg_ds.SeriesDescription)
+    # VR LO (Long String) hard limit — PS3.5 Table 6.2-1 — pydicom warns past 64.
+    assert len(str(seg_ds.SeriesDescription)) <= 64
+    assert len(str(seg_ds.ContentDescription)) <= 64
+    assert len(str(seg_ds.ManufacturerModelName)) <= 64
 
 
 def test_write_is_demo_marks_series_description_and_model_name() -> None:
@@ -481,3 +485,15 @@ def test_write_is_demo_marks_series_description_and_model_name() -> None:
 
     seg_entry = seg_ds.SegmentSequence[0]
     assert "ambientct-mock-v0" in str(seg_entry.SegmentAlgorithmName)
+
+    # VR LO (Long String) hard limit — PS3.5 Table 6.2-1 — pydicom warns past
+    # 64 chars. "mandibular_canal" -> "Mandibular Canal" is the longest
+    # _ANATOMY_LABEL entry, so this exercises the worst case for the base
+    # description getting truncated to make room for the demo marker.
+    assert len(str(seg_ds.SeriesDescription)) <= 64
+    assert len(str(seg_ds.ContentDescription)) <= 64
+    assert len(str(seg_ds.ManufacturerModelName)) <= 64
+    # The demo marker itself must survive intact — only the base description
+    # may be truncated to fit, never the safety marker (plan P1.3).
+    assert str(seg_ds.SeriesDescription).endswith("[DEMO - Not for Diagnosis]")
+    assert str(seg_ds.ContentDescription).endswith("[DEMO - Not for Diagnosis]")

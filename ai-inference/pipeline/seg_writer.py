@@ -160,6 +160,19 @@ _ANATOMY_LABEL: dict[str, str] = {
     "tooth": "Tooth",
 }
 
+# DICOM VR LO (Long String) hard limit — PS3.5 Table 6.2-1. pydicom warns
+# ("The value length (N) exceeds the maximum length of 64 allowed for VR
+# LO") past this, and strict receivers may reject the dataset outright.
+_LO_MAX_LEN = 64
+
+# Kept short deliberately: SeriesDescription/ContentDescription combine a
+# base description with this marker via _demo_marked() below, which never
+# truncates the marker itself to fit _LO_MAX_LEN — only `base` gives way.
+# A truncated base is merely less descriptive; a truncated demo marker
+# would be a patient-safety issue (plan P1.3: a synthetic result stored in
+# Orthanc without this marker is indistinguishable from a real one).
+_DEMO_SUFFIX = " [DEMO - Not for Diagnosis]"
+
 
 # ── Data classes ──────────────────────────────────────────────────────────────
 
@@ -191,6 +204,20 @@ def _code_ds(code_dict: dict[str, str]) -> pydicom.Dataset:
     return ds
 
 
+def _demo_marked(base: str, is_demo: bool = False) -> str:
+    """
+    Combine a base VR LO value with the demo marker, capped at _LO_MAX_LEN.
+
+    When `is_demo`, appends _DEMO_SUFFIX and truncates `base` (never the
+    suffix) so the combined string never exceeds the DICOM VR LO limit.
+    When not `is_demo`, still caps at _LO_MAX_LEN defensively — this is a
+    general VR LO rule, not a demo-only one.
+    """
+    if not is_demo:
+        return base[:_LO_MAX_LEN]
+    return base[: _LO_MAX_LEN - len(_DEMO_SUFFIX)] + _DEMO_SUFFIX
+
+
 def _build_template(
     anatomy_class: str,
     class_index: int,
@@ -210,7 +237,9 @@ def _build_template(
     resulting SEG must be unmistakably marked as synthetic INSIDE the DICOM
     file itself — a PACS browser showing a stored SEG has no other signal
     to distinguish it from a real result. SeriesDescription/ContentDescription
-    get a distinctive suffix; SegmentAlgorithmName/ManufacturerModelName
+    get a distinctive suffix via _demo_marked() (base description truncated
+    if needed to respect the VR LO 64-char limit — see _LO_MAX_LEN — the
+    suffix itself is never shortened); SegmentAlgorithmName/ManufacturerModelName
     (set from model_id in _fix_uids_and_metadata) already carry the mock
     model id "ambientct-mock-v0" whenever the caller passes it through.
     """
@@ -222,16 +251,17 @@ def _build_template(
     template = pydicom.Dataset()
 
     label = _ANATOMY_LABEL.get(anatomy_class, anatomy_class)
-    demo_suffix = " [DEMO DATA — Research Preview, Not for Diagnosis]" if is_demo else ""
 
     # Mandatory template fields read by writer_utils.copy_segmentation_template
     template.ClinicalTrialSeriesID = "Session1"
     template.ClinicalTrialTimePointID = "1"
-    template.SeriesDescription = f"AmbientCT AI Segmentation — {label}{demo_suffix}"
+    template.SeriesDescription = _demo_marked(
+        f"AmbientCT AI Segmentation — {label}", is_demo
+    )
     # SeriesNumber: large offset so SEG appears after CT series in ordered viewers
     template.SeriesNumber = str(9000 + class_index)
     template.ContentLabel = "SEGMENTATION"
-    template.ContentDescription = f"AI segmentation: {label}{demo_suffix}"
+    template.ContentDescription = _demo_marked(f"AI segmentation: {label}", is_demo)
     template.ContentCreatorName = "AmbientCT"
     template.BodyPartExamined = "JAW"
 
@@ -453,7 +483,10 @@ def _fix_uids_and_metadata(
     # Contributing equipment / provenance
     seg_ds.SoftwareVersions = "AmbientCT AI Assist 0.2"
     seg_ds.Manufacturer = "AmbientCT"
-    seg_ds.ManufacturerModelName = f"AmbientCT-AI/{model_id}"
+    # VR LO 64-char cap (see _LO_MAX_LEN) — model_id already carries the demo
+    # marker for this field (e.g. "ambientct-mock-v0"), so a plain truncation
+    # is safe: it never needs to protect a separately-appended suffix.
+    seg_ds.ManufacturerModelName = f"AmbientCT-AI/{model_id}"[:_LO_MAX_LEN]
     seg_ds.DeviceSerialNumber = "0"
 
     return new_sop_uid, new_series_uid
