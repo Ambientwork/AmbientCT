@@ -56,6 +56,31 @@ server {
     add_header Cross-Origin-Resource-Policy "cross-origin" always;
   }
 
+  # Reverse proxy: viewer browser → mar-processor FastAPI service, by Compose
+  # service name over the internal pacs-net — NOT a hardcoded host port.
+  # plan §10 P3 finding: the viewer previously called a hardcoded absolute
+  # http://localhost:8000 default (see DentalContainerViewport MAR_URL) with
+  # no override ever wired up anywhere. That happened to match production's
+  # host port mapping by coincidence, but against the isolated test stack
+  # (mar-processor published on host port 8100) it silently hit the
+  # PRODUCTION mar-processor/Orthanc instead — since the isolated stack's
+  # phantom series shares the same SeriesInstanceUID as production's, the
+  # call "succeeded" there, writing synthetic MAR-derived series into
+  # production Orthanc. Routing through this same-origin proxy (matching the
+  # /pacs/ and /api/ai/ pattern above) makes every stack talk to its own
+  # mar-processor, unconditionally.
+  location /mar-api/ {
+    proxy_pass http://mar-processor:8000/;
+    proxy_set_header Host $http_host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_read_timeout 300;
+    proxy_connect_timeout 30;
+    client_max_body_size 50m;
+    add_header Cross-Origin-Opener-Policy "same-origin" always;
+    add_header Cross-Origin-Embedder-Policy "credentialless" always;
+    add_header Cross-Origin-Resource-Policy "cross-origin" always;
+  }
+
   # Help page — served as static HTML
   location = /help {
     default_type text/html;

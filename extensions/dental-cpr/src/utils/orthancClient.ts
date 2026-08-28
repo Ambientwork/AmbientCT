@@ -27,6 +27,13 @@ export interface UploadResult {
   studyInstanceUID: string | null;
 }
 
+export interface StoredMarSeriesResult {
+  studyInstanceUID: string;
+  sourceSeriesInstanceUID: string;
+  marSeriesInstanceUID: string;
+  createdAt: string;
+}
+
 export function getStudyModalities(modality: string): string[] {
   return String(modality || '')
     .split('\\')
@@ -42,7 +49,54 @@ export function getStudyViewerPath(
   study: Pick<StudySummary, 'studyInstanceUID' | 'modality'>
 ): string {
   const route = supportsDentalViewer(study) ? '/dentalCPR' : '/viewer';
-  return `${route}?StudyInstanceUIDs=${encodeURIComponent(study.studyInstanceUID)}`;
+  return buildViewerPath(route, study.studyInstanceUID);
+}
+
+export function getSeriesViewerPath(
+  study: Pick<StudySummary, 'studyInstanceUID' | 'modality'>,
+  seriesInstanceUIDs: string[],
+  initialSeriesInstanceUID?: string,
+  extraParams: Record<string, string | undefined> = {}
+): string {
+  const route = supportsDentalViewer(study) ? '/dentalCPR' : '/viewer';
+  return buildViewerPath(route, study.studyInstanceUID, {
+    seriesInstanceUIDs,
+    initialSeriesInstanceUID,
+    extraParams,
+  });
+}
+
+function buildViewerPath(
+  route: string,
+  studyInstanceUID: string,
+  options: {
+    seriesInstanceUIDs?: string[];
+    initialSeriesInstanceUID?: string;
+    extraParams?: Record<string, string | undefined>;
+  } = {}
+): string {
+  const params = new URLSearchParams();
+  params.append('StudyInstanceUIDs', studyInstanceUID);
+
+  const uniqueSeries = Array.from(
+    new Set((options.seriesInstanceUIDs ?? []).map(uid => String(uid || '').trim()).filter(Boolean))
+  );
+
+  if (uniqueSeries.length) {
+    params.set('SeriesInstanceUIDs', uniqueSeries.join(','));
+  }
+
+  if (options.initialSeriesInstanceUID) {
+    params.set('initialSeriesInstanceUID', options.initialSeriesInstanceUID);
+  }
+
+  for (const [key, value] of Object.entries(options.extraParams ?? {})) {
+    if (value) {
+      params.set(key, value);
+    }
+  }
+
+  return `${route}?${params.toString()}`;
 }
 
 // ── DICOMweb tag helpers ────────────────────────────────────────────────────
@@ -140,6 +194,55 @@ export class OrthancClient {
   }
 
   /**
+   * Checks whether a series still exists in Orthanc via a DICOMweb QIDO
+   * series-level search. Used to detect stale MAR mappings (plan §10 P3.2):
+   * the source or MAR-result series referenced by a localStorage mapping may
+   * have been removed from Orthanc since the mapping was saved (data reset,
+   * manual deletion, isolated-stack teardown, …). Any network/HTTP failure
+   * is treated as "cannot verify" (true) rather than "gone" — an offline
+   * Orthanc must not falsely invalidate mappings that are otherwise fine.
+   */
+  async checkSeriesExists(seriesInstanceUID: string): Promise<boolean> {
+    if (!seriesInstanceUID) return false;
+    try {
+      const r = await fetch(
+        `${this.base}/series?SeriesInstanceUID=${encodeURIComponent(seriesInstanceUID)}`
+      );
+      if (!r.ok) return true; // can't verify — don't punish an unrelated server error
+      const data = await r.json().catch(() => null);
+      return Array.isArray(data) && data.length > 0;
+    } catch {
+      return true; // network error — can't verify, assume present
+    }
+  }
+
+  /**
+   * Bounded wait for a just-written series to become queryable (plan §10
+   * P3.2/P3.6 scenario 3/4): Orthanc's DICOMweb/QIDO index can lag a moment
+   * behind a STOW-RS write that already returned success, so navigating to a
+   * MAR result the instant the job reports "completed" can otherwise hit a
+   * series the viewer's data source can't find yet — either falling back to
+   * single-series display or, if it was the only series requested, matching
+   * nothing at all. Resolves true as soon as the series is found, false if
+   * it still isn't after the attempt budget (caller proceeds regardless —
+   * this only delays exposing the navigation, it never blocks indefinitely).
+   */
+  async waitForSeriesQueryable(
+    seriesInstanceUID: string,
+    options: { attempts?: number; delayMs?: number } = {}
+  ): Promise<boolean> {
+    const attempts = options.attempts ?? 8;
+    const delayMs = options.delayMs ?? 800;
+    for (let i = 0; i < attempts; i++) {
+      if (await this.checkSeriesExists(seriesInstanceUID)) return true;
+      if (i < attempts - 1) {
+        await new Promise(resolve => setTimeout(resolve, delayMs));
+      }
+    }
+    return false;
+  }
+
+  /**
    * Upload a DICOM payload.
    * `.dcm` files use STOW-RS, `.zip` archives use Orthanc's REST import.
    */
@@ -229,8 +332,21 @@ async function resolveStudyInstanceUIDFromOrthancUpload(base: string, payload: a
 }
 
 // ── localStorage helpers ────────────────────────────────────────────────────
+//
+// NOTE on MAR-mapping persistence (v0.3 interim, plan §10 P3.2): the
+// source-series → MAR-result-series mapping below lives only in the current
+// browser's localStorage. It is NOT clinical persistence — it is not backed
+// up, not shared across devices/browsers, and not synced with Orthanc. If a
+// mapped series is deleted from Orthanc (data reset, isolated-stack
+// teardown, manual cleanup), the mapping goes stale; see
+// `findStoredMarSeriesResult` callers, which should verify staleness via
+// `OrthancClient.checkSeriesExists()` before trusting a mapping and offer to
+// regenerate rather than navigate into a series that no longer exists. A
+// server-side (Orthanc-backed) mapping store is tracked as future work
+// (plan §17.2) and is out of scope for this phase.
 
 const LS_KEY = 'ambientct.recentStudies';
+const MAR_RESULTS_LS_KEY = 'ambientct.marResultsBySourceSeries';
 const MAX_RECENT = 20;
 const IMPORT_DAYS = 7;
 
@@ -270,4 +386,71 @@ export function getRecentStudies(): StoredStudySummary[] {
 export function getImportedStudies(): StoredStudySummary[] {
   const cutoff = new Date(Date.now() - IMPORT_DAYS * 86400000).toISOString();
   return getStoredStudies().filter(s => s.importedAt && s.importedAt > cutoff);
+}
+
+export function saveStoredMarSeriesResult(result: Omit<StoredMarSeriesResult, 'createdAt'>): void {
+  const storage = getLocalStorageSafe();
+  if (!storage) return;
+
+  const map = getStoredMarSeriesMap(storage);
+  map[result.sourceSeriesInstanceUID] = {
+    ...result,
+    createdAt: new Date().toISOString(),
+  };
+  storage.setItem(MAR_RESULTS_LS_KEY, JSON.stringify(map));
+}
+
+export function getStoredMarSeriesResult(
+  sourceSeriesInstanceUID: string
+): StoredMarSeriesResult | undefined {
+  if (!sourceSeriesInstanceUID) return undefined;
+  const storage = getLocalStorageSafe();
+  if (!storage) return undefined;
+  return getStoredMarSeriesMap(storage)[sourceSeriesInstanceUID];
+}
+
+export function findStoredMarSeriesResult(
+  seriesInstanceUID: string
+): StoredMarSeriesResult | undefined {
+  if (!seriesInstanceUID) return undefined;
+  const storage = getLocalStorageSafe();
+  if (!storage) return undefined;
+
+  const results = Object.values(getStoredMarSeriesMap(storage));
+  return results.find(result =>
+    result.sourceSeriesInstanceUID === seriesInstanceUID ||
+    result.marSeriesInstanceUID === seriesInstanceUID
+  );
+}
+
+/**
+ * Removes a stale/invalid MAR mapping (invalidate/delete path, plan §10
+ * P3.2). Looked up by source-series UID, same key the map is stored under.
+ */
+export function invalidateStoredMarSeriesResult(sourceSeriesInstanceUID: string): void {
+  if (!sourceSeriesInstanceUID) return;
+  const storage = getLocalStorageSafe();
+  if (!storage) return;
+
+  const map = getStoredMarSeriesMap(storage);
+  if (!(sourceSeriesInstanceUID in map)) return;
+  delete map[sourceSeriesInstanceUID];
+  storage.setItem(MAR_RESULTS_LS_KEY, JSON.stringify(map));
+}
+
+function getStoredMarSeriesMap(storage: Storage): Record<string, StoredMarSeriesResult> {
+  try {
+    const parsed = JSON.parse(storage.getItem(MAR_RESULTS_LS_KEY) ?? '{}');
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function getLocalStorageSafe(): Storage | undefined {
+  try {
+    return typeof localStorage !== 'undefined' ? localStorage : undefined;
+  } catch {
+    return undefined;
+  }
 }

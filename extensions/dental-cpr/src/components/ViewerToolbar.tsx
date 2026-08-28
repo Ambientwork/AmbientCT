@@ -8,6 +8,8 @@ export interface ViewerToolbarProps {
   patientName: string;
   modality: string;
   studyDate: string;
+  layoutMode?: 'cpr' | 'mpr';
+  onLayoutModeChange?: (mode: 'cpr' | 'mpr') => void;
   slabMm?: number;
   onSlabChange?: (mm: number) => void;
   onClose: () => void;
@@ -16,13 +18,28 @@ export interface ViewerToolbarProps {
   marProgress?: number;      // 0–100
   marSeriesUid?: string;
   onMarTrigger?: () => void;
+  onOpenMarSeries?: () => void;
+  onEnterMarCompare?: () => void;
+  onSwitchToOriginalSeries?: () => void;
+  onSwitchToMarSeries?: () => void;
+  activeSeriesLabel?: 'original' | 'mar';
+  // Synchronized compare view (plan §10 P3.4) — W/L lock across the Original/
+  // MAR/Diff columns. Visible + default-on whenever compare mode is active.
+  wlLocked?: boolean;
+  onWlLockChange?: (locked: boolean) => void;
 }
 
 export default function ViewerToolbar({
-  patientName, modality, studyDate, slabMm = 10, onSlabChange, onClose,
+  patientName, modality, studyDate, layoutMode = 'cpr', onLayoutModeChange,
+  slabMm = 10, onSlabChange, onClose,
   marStatus = 'idle', marProgress = 0, marSeriesUid, onMarTrigger,
+  onOpenMarSeries, onEnterMarCompare, onSwitchToOriginalSeries, onSwitchToMarSeries,
+  activeSeriesLabel, wlLocked = true, onWlLockChange,
 }: ViewerToolbarProps) {
   const label = [patientName, studyDate ? formatDate(studyDate) : ''].filter(Boolean).join(' · ');
+  const inMarCompare = Boolean(onSwitchToOriginalSeries && onSwitchToMarSeries);
+  const showMarActions = !inMarCompare && Boolean(marSeriesUid);
+  const showMarTrigger = onMarTrigger && marStatus !== 'done' && !showMarActions;
 
   return (
     <div style={{
@@ -65,7 +82,7 @@ export default function ViewerToolbar({
       <div style={{ flex: 1 }} />
 
       {/* ── MAR-Button ─────────────────────────────────────────────── */}
-      {onMarTrigger && marStatus !== 'done' && (
+      {showMarTrigger && (
         <MarButton
           status={marStatus}
           progress={marProgress}
@@ -73,13 +90,39 @@ export default function ViewerToolbar({
         />
       )}
 
-      {/* MAR fertig: Link zur neuen Serie */}
-      {marStatus === 'done' && marSeriesUid && (
-        <MarDoneHint seriesUid={marSeriesUid} />
+      {inMarCompare && (
+        <>
+          <CompareBadge />
+          <MarCompareSwitcher
+            activeSeriesLabel={activeSeriesLabel}
+            onSwitchToOriginalSeries={onSwitchToOriginalSeries!}
+            onSwitchToMarSeries={onSwitchToMarSeries!}
+          />
+        </>
+      )}
+
+      {onWlLockChange && layoutMode === 'mpr' && (
+        <WlLockToggle locked={wlLocked} onChange={onWlLockChange} />
+      )}
+
+      {/* MAR fertig: direkte Aktionen statt UID-Hinweis */}
+      {showMarActions && (
+        <MarResultActions
+          seriesUid={marSeriesUid}
+          onOpenMarSeries={onOpenMarSeries}
+          onEnterMarCompare={onEnterMarCompare}
+        />
+      )}
+
+      {onLayoutModeChange && (
+        <LayoutModeSwitcher
+          layoutMode={layoutMode}
+          onChange={onLayoutModeChange}
+        />
       )}
 
       {/* Slab slider */}
-      {onSlabChange && (
+      {onSlabChange && layoutMode === 'cpr' && (
         <label style={{ display: 'flex', alignItems: 'center', gap: 5, color: Colors.textMuted, fontSize: 11 }}>
           Slab
           <input
@@ -191,25 +234,248 @@ function MarButton({ status, progress, onClick }: {
   );
 }
 
-function MarDoneHint({ seriesUid }: { seriesUid: string }): React.ReactElement {
+function MarResultActions({
+  seriesUid,
+  onOpenMarSeries,
+  onEnterMarCompare,
+}: {
+  seriesUid: string;
+  onOpenMarSeries?: () => void;
+  onEnterMarCompare?: () => void;
+}): React.ReactElement {
   return (
-    <span
-      title={`MAR-Serie UID: ${seriesUid}\nSerie in der OHIF-Seitenliste wählen.`}
+    <div
       style={{
         display: 'flex',
         alignItems: 'center',
-        gap: 4,
-        fontSize: 11,
-        color: '#2ecc71',
-        border: '1px solid #27ae60',
-        borderRadius: 6,
-        padding: '3px 8px',
-        cursor: 'default',
-        userSelect: 'none',
+        gap: 6,
       }}
     >
-      ✓ MAR bereit — Serie in Seitenliste wählen
+      <span
+        title={`MAR-Serie UID: ${seriesUid}`}
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 4,
+          fontSize: 11,
+          color: '#2ecc71',
+          border: '1px solid #27ae60',
+          borderRadius: 6,
+          padding: '3px 8px',
+          cursor: 'default',
+          userSelect: 'none',
+        }}
+      >
+        ✓ MAR bereit
+      </span>
+      {onOpenMarSeries && (
+        <SmallActionButton title="MAR-Serie direkt im Viewer oeffnen" onClick={onOpenMarSeries}>
+          MAR oeffnen
+        </SmallActionButton>
+      )}
+      {onEnterMarCompare && (
+        <SmallActionButton title="Original und MAR im Vergleichsmodus laden" onClick={onEnterMarCompare}>
+          Vergleich
+        </SmallActionButton>
+      )}
+    </div>
+  );
+}
+
+function MarCompareSwitcher({
+  activeSeriesLabel,
+  onSwitchToOriginalSeries,
+  onSwitchToMarSeries,
+}: {
+  activeSeriesLabel?: 'original' | 'mar';
+  onSwitchToOriginalSeries: () => void;
+  onSwitchToMarSeries: () => void;
+}): React.ReactElement {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+      <span
+        style={{
+          fontSize: 11,
+          color: Colors.textMuted,
+          textTransform: 'uppercase',
+          letterSpacing: '0.04em',
+        }}
+      >
+        Vergleich
+      </span>
+      <div style={{ display: 'inline-flex', border: Border, borderRadius: 6, overflow: 'hidden' }}>
+        <SeriesToggleButton
+          active={activeSeriesLabel === 'original'}
+          onClick={onSwitchToOriginalSeries}
+          title="Originalserie anzeigen"
+        >
+          Original
+        </SeriesToggleButton>
+        <SeriesToggleButton
+          active={activeSeriesLabel === 'mar'}
+          onClick={onSwitchToMarSeries}
+          title="MAR-Serie anzeigen"
+        >
+          MAR
+        </SeriesToggleButton>
+      </div>
+    </div>
+  );
+}
+
+function WlLockToggle({
+  locked,
+  onChange,
+}: {
+  locked: boolean;
+  onChange: (locked: boolean) => void;
+}): React.ReactElement {
+  return (
+    <button
+      onClick={() => onChange(!locked)}
+      title={
+        locked
+          ? 'W/L-Lock aktiv — Fenster/Level-Änderungen gelten für alle Vergleichs-Panels'
+          : 'W/L-Lock aus — jedes Panel hat ein eigenes Fenster/Level'
+      }
+      aria-pressed={locked}
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 4,
+        background: locked ? 'rgba(56,189,248,0.12)' : 'transparent',
+        border: `1px solid ${locked ? Colors.primary : Colors.textMuted}`,
+        borderRadius: 6,
+        color: locked ? Colors.primary : Colors.textMuted,
+        cursor: 'pointer',
+        fontSize: 11,
+        fontFamily: Font.family,
+        padding: '3px 8px',
+      }}
+    >
+      {locked ? '🔒 W/L Lock' : '🔓 W/L Lock'}
+    </button>
+  );
+}
+
+function CompareBadge(): React.ReactElement {
+  return (
+    <span
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 4,
+        fontSize: 11,
+        color: '#f59e0b',
+        border: '1px solid #b45309',
+        borderRadius: 6,
+        padding: '3px 8px',
+        userSelect: 'none',
+      }}
+      title="Original-, MAR- und Differenzansichten sind aktiv"
+    >
+      Vergleich aktiv
     </span>
+  );
+}
+
+function SeriesToggleButton({
+  active,
+  onClick,
+  title,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  title: string;
+  children: React.ReactNode;
+}): React.ReactElement {
+  return (
+    <button
+      onClick={active ? undefined : onClick}
+      title={title}
+      style={{
+        background: active ? Colors.primary : 'transparent',
+        color: active ? '#0b0b10' : Colors.textMuted,
+        border: 'none',
+        cursor: active ? 'default' : 'pointer',
+        fontSize: 11,
+        fontFamily: Font.family,
+        fontWeight: 600,
+        padding: '4px 10px',
+        minWidth: 74,
+      }}
+    >
+      {children}
+    </button>
+  );
+}
+
+function SmallActionButton({
+  children,
+  onClick,
+  title,
+}: {
+  children: React.ReactNode;
+  onClick: () => void;
+  title: string;
+}): React.ReactElement {
+  return (
+    <button
+      onClick={onClick}
+      title={title}
+      style={{
+        background: 'transparent',
+        border: Border,
+        borderRadius: 6,
+        color: Colors.text,
+        cursor: 'pointer',
+        fontSize: 11,
+        fontFamily: Font.family,
+        padding: '3px 8px',
+      }}
+    >
+      {children}
+    </button>
+  );
+}
+
+function LayoutModeSwitcher({
+  layoutMode,
+  onChange,
+}: {
+  layoutMode: 'cpr' | 'mpr';
+  onChange: (mode: 'cpr' | 'mpr') => void;
+}): React.ReactElement {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+      <span
+        style={{
+          fontSize: 11,
+          color: Colors.textMuted,
+          textTransform: 'uppercase',
+          letterSpacing: '0.04em',
+        }}
+      >
+        Layout
+      </span>
+      <div style={{ display: 'inline-flex', border: Border, borderRadius: 6, overflow: 'hidden' }}>
+        <SeriesToggleButton
+          active={layoutMode === 'cpr'}
+          onClick={() => onChange('cpr')}
+          title="Dental CPR Layout anzeigen"
+        >
+          CPR
+        </SeriesToggleButton>
+        <SeriesToggleButton
+          active={layoutMode === 'mpr'}
+          onClick={() => onChange('mpr')}
+          title="Axial plus MPR Layout anzeigen"
+        >
+          MPR
+        </SeriesToggleButton>
+      </div>
+    </div>
   );
 }
 

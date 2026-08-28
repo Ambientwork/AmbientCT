@@ -113,14 +113,19 @@ async function runMarAndEnterCompare(page) {
 
   await page.getByRole('button', { name: 'Vergleich' }).click();
   await page.waitForURL(/marSourceSeriesInstanceUID=.*marResultSeriesInstanceUID=/, { timeout: 30000 });
-  await expect(page.getByText('Vergleich')).toBeVisible({ timeout: 30000 });
+  // 'Vergleich' alone is ambiguous once in compare mode — it matches both the
+  // "Vergleich aktiv" badge and the "Vergleich" switcher label.
+  await expect(page.getByText('Vergleich aktiv')).toBeVisible({ timeout: 30000 });
   await page.getByRole('button', { name: 'MPR' }).click();
-  await expect(page.getByText('Original · Coronal')).toBeVisible({ timeout: 30000 });
-  await expect(page.getByText('MAR · Coronal')).toBeVisible({ timeout: 30000 });
-  await expect(page.getByText('Diff · Coronal')).toBeVisible({ timeout: 30000 });
-  await expect(page.getByText('Original · Sagittal')).toBeVisible({ timeout: 30000 });
-  await expect(page.getByText('MAR · Sagittal')).toBeVisible({ timeout: 30000 });
-  await expect(page.getByText('Diff · Sagittal')).toBeVisible({ timeout: 30000 });
+  // Two full (hundreds-of-slices) CBCT series load concurrently for compare
+  // mode — matches DentalMPRViewport/DentalMPRDiffViewport's bounded-poll
+  // budget (45s) plus headroom for OHIF's own display-set resolution.
+  await expect(page.getByText('Original · Coronal')).toBeVisible({ timeout: 60000 });
+  await expect(page.getByText('MAR · Coronal')).toBeVisible({ timeout: 60000 });
+  await expect(page.getByText('Diff · Coronal')).toBeVisible({ timeout: 60000 });
+  await expect(page.getByText('Original · Sagittal')).toBeVisible({ timeout: 60000 });
+  await expect(page.getByText('MAR · Sagittal')).toBeVisible({ timeout: 60000 });
+  await expect(page.getByText('Diff · Sagittal')).toBeVisible({ timeout: 60000 });
 }
 
 async function switchToMprLayoutAndExpectVisible(page) {
@@ -133,6 +138,15 @@ async function returnToFileManager(page, buttonName = 'Schließen') {
   await page.getByRole('button', { name: buttonName }).click();
   await page.waitForURL(`${BASE_URL}/`, { timeout: 15000 });
   await gotoFileManager(page);
+}
+
+// Reads a compare-column's status line by locating its label span and
+// walking to the adjacent status span the toolbar renders next to it
+// (see DentalMPRViewport / DentalMPRDiffViewport toolbar markup).
+async function readPanelStatus(page, panelLabel) {
+  const label = page.getByText(panelLabel, { exact: true });
+  const status = label.locator('xpath=following-sibling::span[1]');
+  return status.innerText();
 }
 
 test.describe('AmbientCT dental CPR flow', () => {
@@ -218,6 +232,7 @@ test.describe('AmbientCT dental CPR flow', () => {
 
   test('runs MAR and enters compare mode from the dental viewer', async ({ page }) => {
     test.skip(!IS_ISOLATED_STACK, 'MAR test mutates Orthanc (writes a new series) — only allowed against the isolated test stack (BASE_URL=http://localhost:3100).');
+    test.setTimeout(180000); // two full CBCT series loading concurrently for compare mode
 
     const { pageErrors, consoleErrors } = collectBrowserIssues(page);
 
@@ -232,5 +247,151 @@ test.describe('AmbientCT dental CPR flow', () => {
     expect(unexpectedErrors, `Unexpected browser errors:\n${unexpectedErrors.join('\n')}`).toEqual([]);
     expect(pageErrors.join('\n')).not.toMatch(/Invalid study URL|notfoundstudy/i);
     expect(consoleErrors.join('\n')).not.toMatch(/Invalid study URL|notfoundstudy/i);
+  });
+
+  test('"MAR oeffnen" opens the MAR result series directly (not the compare grid)', async ({ page }) => {
+    test.skip(!IS_ISOLATED_STACK, 'MAR test mutates Orthanc (writes a new series) — only allowed against the isolated test stack (BASE_URL=http://localhost:3100).');
+
+    const { pageErrors, consoleErrors } = collectBrowserIssues(page);
+
+    await gotoFileManager(page);
+    await page.getByRole('button', { name: 'Öffnen →' }).first().click();
+    await expectViewerVisible(page);
+    await drawArchAndExpectPanoramicReady(page);
+
+    const marButton = page.getByRole('button', { name: /MAR/i }).first();
+    await marButton.click();
+    await expect(page.getByText(/MAR bereit/i)).toBeVisible({ timeout: 180000 });
+    await expect(page.getByRole('button', { name: 'MAR oeffnen' })).toBeVisible({ timeout: 30000 });
+
+    await page.getByRole('button', { name: 'MAR oeffnen' }).click();
+    await expectViewerVisible(page);
+
+    const url = new URL(page.url());
+    const seriesParam = url.searchParams.get('SeriesInstanceUIDs') ?? '';
+    // A single-series navigation — not the 3-column compare grid.
+    expect(seriesParam.split(',').filter(Boolean).length).toBeLessThanOrEqual(1);
+    await expect(page.getByText('Original · Coronal')).not.toBeVisible();
+
+    const unexpectedErrors = getUnexpectedErrors(pageErrors, consoleErrors);
+    expect(unexpectedErrors, `Unexpected browser errors:\n${unexpectedErrors.join('\n')}`).toEqual([]);
+  });
+
+  test('moving one slider updates the synced Original/MAR/Diff coronal columns', async ({ page }) => {
+    test.skip(!IS_ISOLATED_STACK, 'MAR test mutates Orthanc (writes a new series) — only allowed against the isolated test stack (BASE_URL=http://localhost:3100).');
+    test.setTimeout(180000); // two full CBCT series loading concurrently for compare mode
+
+    const { pageErrors, consoleErrors } = collectBrowserIssues(page);
+
+    await gotoFileManager(page);
+    await page.getByRole('button', { name: 'Öffnen →' }).first().click();
+    await expectViewerVisible(page);
+    await drawArchAndExpectPanoramicReady(page);
+    await runMarAndEnterCompare(page);
+
+    const sourceSlider = page.getByRole('slider', { name: 'Slice Original · Coronal' });
+    await expect(sourceSlider).toBeVisible({ timeout: 30000 });
+    await expect(page.getByRole('slider', { name: 'Slice MAR · Coronal' })).toBeVisible({ timeout: 30000 });
+    await expect(page.getByRole('slider', { name: 'Slice Diff · Coronal' })).toBeVisible({ timeout: 30000 });
+
+    const before = await readPanelStatus(page, 'Original · Coronal');
+
+    await sourceSlider.focus();
+    for (let i = 0; i < 20; i++) {
+      await page.keyboard.press('ArrowRight');
+    }
+
+    await expect(async () => {
+      const after = await readPanelStatus(page, 'Original · Coronal');
+      expect(after).not.toBe(before);
+    }).toPass({ timeout: 15000 });
+
+    const originalStatus = await readPanelStatus(page, 'Original · Coronal');
+    const marStatusText = await readPanelStatus(page, 'MAR · Coronal');
+    const diffStatusText = await readPanelStatus(page, 'Diff · Coronal');
+
+    const originalSlice = originalStatus.match(/Slice Y ([\d.-]+) mm/);
+    const marSlice = marStatusText.match(/Slice Y ([\d.-]+) mm/);
+    const diffSlice = diffStatusText.match(/Slice Y ([\d.-]+) mm/);
+
+    expect(originalSlice, `Original status: "${originalStatus}"`).not.toBeNull();
+    expect(marSlice, `MAR status: "${marStatusText}"`).not.toBeNull();
+    expect(diffSlice, `Diff status: "${diffStatusText}"`).not.toBeNull();
+    expect(marSlice[1]).toBe(originalSlice[1]);
+    expect(diffSlice[1]).toBe(originalSlice[1]);
+
+    const unexpectedErrors = getUnexpectedErrors(pageErrors, consoleErrors);
+    expect(unexpectedErrors, `Unexpected browser errors:\n${unexpectedErrors.join('\n')}`).toEqual([]);
+  });
+
+  test('reload rediscovers the MAR mapping via localStorage', async ({ page }) => {
+    test.skip(!IS_ISOLATED_STACK, 'MAR test mutates Orthanc (writes a new series) — only allowed against the isolated test stack (BASE_URL=http://localhost:3100).');
+
+    const { pageErrors, consoleErrors } = collectBrowserIssues(page);
+
+    await gotoFileManager(page);
+    await page.getByRole('button', { name: 'Öffnen →' }).first().click();
+    await expectViewerVisible(page);
+    await drawArchAndExpectPanoramicReady(page);
+
+    const marButton = page.getByRole('button', { name: /MAR/i }).first();
+    await marButton.click();
+    await expect(page.getByText(/MAR bereit/i)).toBeVisible({ timeout: 180000 });
+
+    // Fresh visit to the exact same (source-series) URL — as if the tab had
+    // been closed and reopened. No marSourceSeriesInstanceUID/
+    // marResultSeriesInstanceUID params are present here; the mapping must
+    // come back from localStorage (plan §10 P3.2), not the URL.
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await expectViewerVisible(page);
+    await expect(page.getByText(/MAR bereit/i)).toBeVisible({ timeout: 20000 });
+    await expect(page.getByRole('button', { name: 'MAR oeffnen' })).toBeVisible({ timeout: 20000 });
+    await expect(page.getByRole('button', { name: 'Vergleich' })).toBeVisible({ timeout: 20000 });
+
+    const unexpectedErrors = getUnexpectedErrors(pageErrors, consoleErrors);
+    expect(unexpectedErrors, `Unexpected browser errors:\n${unexpectedErrors.join('\n')}`).toEqual([]);
+  });
+
+  test('an incomplete compare URL (missing MAR-result series) falls back to a working single-series MPR view', async ({ page }) => {
+    // A wholly non-existent SeriesInstanceUIDs filter never reaches our
+    // component at all — OHIF's own hanging-protocol/data-source resolution
+    // (outside this phase's file scope, see modes/dental-cpr-mode) stays on
+    // its platform-level loading screen indefinitely in that case, which is
+    // a separate, pre-existing limitation, not addressed by this phase's
+    // bounded-poll fix (verified interactively; not covered by this test).
+    // What P3.1 actually guarantees, and what this test verifies, is that an
+    // incomplete compare URL — a real source series but a MAR-result series
+    // that doesn't exist — falls back to a working single-series MPR view
+    // instead of an empty/broken compare grid.
+    const { pageErrors, consoleErrors } = collectBrowserIssues(page);
+
+    await gotoFileManager(page);
+    await page.getByRole('button', { name: 'Öffnen →' }).first().click();
+    await expectViewerVisible(page);
+
+    const openedUrl = new URL(page.url());
+    const studyUID = openedUrl.searchParams.get('StudyInstanceUIDs');
+    const realSeriesUID = openedUrl.searchParams.get('initialSeriesInstanceUID');
+    expect(studyUID).toBeTruthy();
+
+    const bogusMarSeriesUID = '9.9.9.999.404.does.not.exist.in.orthanc';
+    await page.goto(
+      `${BASE_URL}/dentalCPR?StudyInstanceUIDs=${encodeURIComponent(studyUID)}` +
+      (realSeriesUID ? `&initialSeriesInstanceUID=${encodeURIComponent(realSeriesUID)}` : '') +
+      `&layoutMode=mpr&marSourceSeriesInstanceUID=${encodeURIComponent(realSeriesUID ?? '')}` +
+      `&marResultSeriesInstanceUID=${encodeURIComponent(bogusMarSeriesUID)}`,
+      { waitUntil: 'domcontentloaded' }
+    );
+
+    // Falls back to the plain two-viewport MPR (not the 3-column compare
+    // grid, and not stuck) — the real series still renders correctly.
+    // { exact: true } — otherwise this also matches the idle placeholder
+    // text "MPR · Coronal — complete the arch to load volume".
+    await expect(page.getByText('MPR · Coronal', { exact: true })).toBeVisible({ timeout: 30000 });
+    await expect(page.getByText('MPR · Sagittal', { exact: true })).toBeVisible({ timeout: 30000 });
+    await expect(page.getByText('Original · Coronal')).not.toBeVisible();
+
+    const unexpectedErrors = getUnexpectedErrors(pageErrors, consoleErrors);
+    expect(unexpectedErrors, `Unexpected browser errors:\n${unexpectedErrors.join('\n')}`).toEqual([]);
   });
 });

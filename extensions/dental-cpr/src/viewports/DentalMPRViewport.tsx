@@ -10,6 +10,8 @@ import vtkRenderWindowInteractor from '@kitware/vtk.js/Rendering/Core/RenderWind
 import vtkOpenGLRenderWindow from '@kitware/vtk.js/Rendering/OpenGL/RenderWindow';
 import { ARCH_CROSS_SECTION_POSITION } from './DentalCrossSectionViewport';
 import type { CrossSectionEventDetail } from './DentalCrossSectionViewport';
+import { startBoundedPoll } from '../utils/boundedPoll';
+import { findVolumeForDisplaySet, isVolumeReady } from '../utils/volumeLookup';
 
 // ── Props ─────────────────────────────────────────────────────────────────────
 
@@ -17,11 +19,49 @@ interface DentalMPRViewportProps {
   viewportId: string;
   displaySets: any[];
   servicesManager: any;
+  orientation?: 'coronal' | 'sagittal';
+  labelOverride?: string;
+  accentColor?: string;
+  /**
+   * Controlled slice-position sync (plan §10 P3.4). Omit entirely for a
+   * standalone/uncontrolled viewport (own local slice state, unchanged
+   * behaviour). Pass `null` from a compare-mode parent before any column has
+   * initialized the shared coordinate, and a number once one has — every
+   * viewport sharing the same value re-renders at that patient coordinate.
+   */
+  sliceWorldCoordinate?: number | null;
+  onSliceWorldCoordinateChange?: (worldMm: number) => void;
+  /** Controlled window/level sync — see sliceWorldCoordinate for the same contract. */
+  windowWidth?: number;
+  windowCenter?: number;
+  onWindowLevelChange?: (windowWidth: number, windowCenter: number) => void;
+  /** Total volume-load time budget before showing a retryable error. Default 20s. */
+  pollTimeoutMs?: number;
 }
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 type RenderStatus = 'idle' | 'rendering' | 'ready' | 'error';
+
+/** PHI-free error codes — safe to show in the UI, never derived from tag/pixel data. */
+type RenderErrorCode = 'WEBGL_UNAVAILABLE' | 'VOLUME_LOAD_TIMEOUT' | 'VOLUME_EMPTY' | 'RENDER_FAILED';
+
+const ERROR_MESSAGES: Record<RenderErrorCode, string> = {
+  WEBGL_UNAVAILABLE: 'WebGL nicht verfügbar',
+  VOLUME_LOAD_TIMEOUT: 'Volumen konnte nicht geladen werden (Zeitüberschreitung)',
+  VOLUME_EMPTY: 'Volumen enthält keine Daten',
+  RENDER_FAILED: 'Rendering fehlgeschlagen',
+};
+
+const DEFAULT_POLL_INTERVAL_MS = 800;
+// A CBCT series can be hundreds of slices; two of them load concurrently in
+// compare mode. 20s proved too tight for that in practice (observed timing
+// out mid-load, not on a genuinely missing volume) — 45s still bounds the
+// wait (never infinite) while giving a real multi-hundred-slice load a fair
+// chance to finish before showing the retryable error state.
+const DEFAULT_POLL_TIMEOUT_MS = 45000;
+const DEFAULT_WINDOW_WIDTH = 2000;
+const DEFAULT_WINDOW_CENTER = 400;
 
 /**
  * DentalMPRViewport
@@ -50,6 +90,15 @@ type RenderStatus = 'idle' | 'rendering' | 'ready' | 'error';
 export default function DentalMPRViewport({
   viewportId,
   displaySets,
+  orientation = 'coronal',
+  labelOverride,
+  accentColor = '#00aaff',
+  sliceWorldCoordinate,
+  onSliceWorldCoordinateChange,
+  windowWidth,
+  windowCenter,
+  onWindowLevelChange,
+  pollTimeoutMs = DEFAULT_POLL_TIMEOUT_MS,
 }: DentalMPRViewportProps) {
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -65,15 +114,40 @@ export default function DentalMPRViewport({
 
   // ── React state ───────────────────────────────────────────────────────────
   const [status, setStatus] = useState<RenderStatus>('idle');
+  const [errorCode, setErrorCode] = useState<RenderErrorCode | null>(null);
+  const [retryToken, setRetryToken] = useState(0);
 
   // Slider: current origin Y in mm (anterior-posterior position)
-  const [sliceY, setSliceY]     = useState(0);
-  const [yMin, setYMin]         = useState(0);
-  const [yMax, setYMax]         = useState(1);
+  const [slicePos, setSlicePos]     = useState(0);
+  const [axisMin, setAxisMin]       = useState(0);
+  const [axisMax, setAxisMax]       = useState(1);
+
+  // Window/Level — controlled from a compare-mode parent when W/L-lock is
+  // active, otherwise this viewport's own independent local value.
+  const [ww, setWw] = useState(windowWidth ?? DEFAULT_WINDOW_WIDTH);
+  const [wl, setWl] = useState(windowCenter ?? DEFAULT_WINDOW_CENTER);
+  const wwRef = useRef(ww);
+  const wlRef = useRef(wl);
 
   // Arch position indicator: pixel-row fraction [0,1] in the viewport,
   // null when no event has been received yet
   const [archLinePct, setArchLinePct] = useState<number | null>(null);
+
+  // Latest-value refs for props read from inside long-lived async callbacks
+  // (the bounded-poll onReady handler, the slider handler) — keeps those
+  // callbacks from needing to be recreated (and the poll restarted) on every
+  // parent re-render while still always seeing the current prop value.
+  const sliceWorldCoordinateRef = useRef(sliceWorldCoordinate);
+  useEffect(() => { sliceWorldCoordinateRef.current = sliceWorldCoordinate; }, [sliceWorldCoordinate]);
+  const onSliceWorldCoordinateChangeRef = useRef(onSliceWorldCoordinateChange);
+  useEffect(() => { onSliceWorldCoordinateChangeRef.current = onSliceWorldCoordinateChange; }, [onSliceWorldCoordinateChange]);
+  const onWindowLevelChangeRef = useRef(onWindowLevelChange);
+  useEffect(() => { onWindowLevelChangeRef.current = onWindowLevelChange; }, [onWindowLevelChange]);
+
+  // The slice position this viewport last actually rendered — used by the
+  // controlled-prop sync effect to tell "a sibling moved the shared slider"
+  // apart from "the prop just echoed back the value we ourselves sent up".
+  const lastAppliedSliceRef = useRef<number | null>(null);
 
   // ── VTK pipeline init ─────────────────────────────────────────────────────
   useEffect(() => {
@@ -84,6 +158,7 @@ export default function DentalMPRViewport({
     const hasWebGL = !!(testCanvas.getContext('webgl2') || testCanvas.getContext('webgl'));
     if (!hasWebGL) {
       setStatus('error');
+      setErrorCode('WEBGL_UNAVAILABLE');
       return;
     }
 
@@ -112,6 +187,7 @@ export default function DentalMPRViewport({
     } catch (e) {
       console.error('[DentalMPR] VTK init error:', e);
       setStatus('error');
+      setErrorCode('RENDER_FAILED');
       return;
     }
 
@@ -132,51 +208,18 @@ export default function DentalMPRViewport({
     };
   }, []);
 
-  // ── Volume lookup (mirrors DentalCrossSectionViewport.getVolume) ──────────
-  const getVolume = useCallback(() => {
-    if (!displaySets?.length) return null;
-    const ds = displaySets[0];
+  // ── Volume lookup (shared 3-tier strategy — see src/utils/volumeLookup.ts) ─
+  const getVolume = useCallback(() => findVolumeForDisplaySet(cache as any, displaySets), [displaySets]);
 
-    // 1. Explicit volumeId set by the 3D SOP class handler
-    if (ds.volumeId) {
-      const vol = cache.getVolume(ds.volumeId);
-      if (vol) return vol;
-    }
-
-    // 2. Derived from displaySetInstanceUID (OHIF streaming volume convention)
-    const derivedId = `cornerstoneStreamingImageVolume:${ds.displaySetInstanceUID}`;
-    const volByDerived = cache.getVolume(derivedId);
-    if (volByDerived) return volByDerived;
-
-    // 3. Scan the internal volume cache keyed by SeriesInstanceUID
-    const seriesUID: string | undefined = ds.SeriesInstanceUID;
-    if (seriesUID) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const volumeCache = (cache as any)._volumeCache as Map<string, any> | undefined;
-      if (volumeCache) {
-        for (const [, vol] of volumeCache) {
-          if (
-            vol?.metadata?.SeriesInstanceUID === seriesUID ||
-            (vol?.imageIds?.[0] as string | undefined)?.includes(seriesUID)
-          ) {
-            return vol;
-          }
-        }
-      }
-    }
-
-    return null;
-  }, [displaySets]);
-
-  // ── Render / update the coronal slice ─────────────────────────────────────
+  // ── Render / update the MPR slice ─────────────────────────────────────────
   const renderCoronalSlice = useCallback(
-    (originY: number) => {
+    (originPos: number) => {
       try {
       const volume = getVolume();
       // imageData must exist AND have a valid scalar type (not just an empty proxy)
       const imgDataCheck = volume?.imageData;
-      if (!imgDataCheck) { setStatus('error'); return; }
-      try { if (!imgDataCheck.getNumberOfPoints || imgDataCheck.getNumberOfPoints() < 1) { setStatus('error'); return; } } catch { setStatus('error'); return; }
+      if (!imgDataCheck) { setStatus('error'); setErrorCode('VOLUME_EMPTY'); return; }
+      try { if (!imgDataCheck.getNumberOfPoints || imgDataCheck.getNumberOfPoints() < 1) { setStatus('error'); setErrorCode('VOLUME_EMPTY'); return; } } catch { setStatus('error'); setErrorCode('VOLUME_EMPTY'); return; }
 
       // Cornerstone3D v2+ VoxelManager — populate scalars before vtk.js reads them
       const imgData = volume.imageData;
@@ -207,27 +250,31 @@ export default function DentalMPRViewport({
       // Derive volume extent in mm for slider bounds (only once per volume)
       const bounds = imgData.getBounds() as [number, number, number, number, number, number];
       // bounds = [xMin, xMax, yMin, yMax, zMin, zMax]
-      const volYMin = bounds[2];
-      const volYMax = bounds[3];
-      yBoundsRef.current = [volYMin, volYMax];
-      setYMin(volYMin);
-      setYMax(volYMax);
+      const sliderMin = orientation === 'sagittal' ? bounds[0] : bounds[2];
+      const sliderMax = orientation === 'sagittal' ? bounds[1] : bounds[3];
+      yBoundsRef.current = [sliderMin, sliderMax];
+      setAxisMin(sliderMin);
+      setAxisMax(sliderMax);
 
       // Compute output image half-extents in pixels
-      // Full X extent (left-right) and Z extent (superior-inferior) of the volume
-      const xSpan = bounds[1] - bounds[0]; // mm
+      // Full X/Y extent (horizontal) and Z extent (superior-inferior) of the volume
+      const horizontalSpan = orientation === 'sagittal'
+        ? bounds[3] - bounds[2]
+        : bounds[1] - bounds[0];
       const zSpan = bounds[5] - bounds[4]; // mm
       const mmPerPix = 0.4;
-      const halfX = Math.ceil(xSpan / 2 / mmPerPix);
+      const halfX = Math.ceil(horizontalSpan / 2 / mmPerPix);
       const halfZ = Math.ceil(zSpan / 2 / mmPerPix);
 
-      // Centre of volume in X and Z
+      // Centre of volume in X/Y and Z
       const centerX = (bounds[0] + bounds[1]) / 2;
+      const centerY = (bounds[2] + bounds[3]) / 2;
       const centerZ = (bounds[4] + bounds[5]) / 2;
 
       // Build or reuse the reslice filter
       let reslice = resliceRef.current;
-      if (!reslice) {
+      let actor = actorRef.current;
+      if (!reslice || !actor) {
         reslice = vtkImageReslice.newInstance();
         reslice.setOutputDimensionality(2);
         reslice.setInterpolationMode(1); // linear
@@ -236,36 +283,39 @@ export default function DentalMPRViewport({
         const mapper = vtkImageMapper.newInstance();
         mapper.setInputConnection(reslice.getOutputPort());
 
-        const actor = vtkImageSlice.newInstance();
+        actor = vtkImageSlice.newInstance();
         actor.setMapper(mapper);
-        // Bone window: W=2000, L=400
-        actor.getProperty().setColorWindow(2000);
-        actor.getProperty().setColorLevel(400);
 
         renderer.addActor(actor);
         resliceRef.current = reslice;
         actorRef.current = actor;
       }
+      // Always apply the current W/L (may be controlled by a compare-mode parent)
+      actor.getProperty().setColorWindow(wwRef.current);
+      actor.getProperty().setColorLevel(wlRef.current);
 
       reslice.setInputData(imgData);
       reslice.setOutputExtent([-halfX, halfX, -halfZ, halfZ, 0, 0]);
       reslice.setOutputSpacing([mmPerPix, mmPerPix, 1]);
 
-      // Coronal reslice matrix (row-major Float64Array, as required by vtk.js):
-      //   Row 0: output X direction = [1,0,0] (patient left-right) + origin.x
-      //   Row 1: output Y direction = [0,0,-1] (patient superior-inferior, flipped for screen-up)
-      //          + origin.z  (note: origin here is for this OUTPUT axis = patient Z)
-      //   Row 2: output Z direction = [0,1,0] (slice normal = patient A/P) + origin.y
-      //   Row 3: homogeneous
-      //
-      // The "origin" column gives the world-space point at the image centre.
-      // We keep X and Z at the volume centre and sweep Y for A/P navigation.
-      (reslice as any).setResliceAxes(new Float64Array([
-        1,  0,  0,  centerX,  // row 0: output X = patient X,  origin = centre X
-        0,  0, -1,  centerZ,  // row 1: output Y = -patient Z, origin = centre Z
-        0,  1,  0,  originY,  // row 2: slice normal = patient Y, slice Y position
-        0,  0,  0,  1,        // row 3: homogeneous
-      ]));
+      // Coronal:
+      //   output X = patient X, output Y = -patient Z, normal = patient Y
+      // Sagittal:
+      //   output X = patient Y, output Y = -patient Z, normal = patient X
+      const resliceAxes = orientation === 'sagittal'
+        ? new Float64Array([
+            0,  1,  0,  centerY,
+            0,  0, -1,  centerZ,
+            1,  0,  0,  originPos,
+            0,  0,  0,  1,
+          ])
+        : new Float64Array([
+            1,  0,  0,  centerX,
+            0,  0, -1,  centerZ,
+            0,  1,  0,  originPos,
+            0,  0,  0,  1,
+          ]);
+      (reslice as any).setResliceAxes(resliceAxes);
 
       // Parallel camera looking along -Z at the reslice output plane (Z=0),
       // with +Y screen-up matching the output Y axis (superior → inferior is downward).
@@ -282,58 +332,148 @@ export default function DentalMPRViewport({
       renderWindow.render();
 
       setStatus('ready');
+      setErrorCode(null);
       console.log(
-        `[DentalMPR] Coronal slice rendered at Y=${originY.toFixed(1)} mm`,
+        `[DentalMPR] ${orientation} slice rendered at ${originPos.toFixed(1)} mm`,
         `| extent ±${halfX}×${halfZ} px @ ${mmPerPix} mm/px`
       );
       } catch (err) {
         console.warn('[DentalMPR] renderCoronalSlice error:', (err as Error).message);
         setStatus('error');
+        setErrorCode('RENDER_FAILED');
       }
     },
-    [getVolume]
+    [getVolume, orientation]
   );
 
-  // ── Auto-load: poll cache every 500 ms until imageData is available ───────
+  // Applies a new slice position: renders it, mirrors it into local display
+  // state, and remembers it so the controlled-prop sync effect below can
+  // distinguish "a sibling moved" from "this is just our own value echoed back".
+  const applySlice = useCallback((pos: number) => {
+    lastAppliedSliceRef.current = pos;
+    setSlicePos(pos);
+    renderCoronalSlice(pos);
+  }, [renderCoronalSlice]);
+
+  // ── Auto-load: bounded poll until imageData is available, then timeout ────
+  // (plan §10 addendum 18.2 — this loop previously had no cap and left the UI
+  // stuck on "Waiting for volume…" forever whenever a volume never resolved.)
   useEffect(() => {
-    if (!displaySets?.length) return;
+    if (!displaySets?.length) {
+      setStatus('idle');
+      setErrorCode(null);
+      return;
+    }
 
-    let rafId: ReturnType<typeof setTimeout> | null = null;
-    let cancelled = false;
+    setStatus('idle');
+    setErrorCode(null);
 
-    const tryLoad = () => {
-      if (cancelled) return;
-      const vol = getVolume();
-      let hasData = false;
-      try { hasData = !!(vol?.imageData && vol.imageData.getNumberOfPoints?.() > 0); } catch { /* not ready */ }
-      if (hasData) {
-        // Volume ready — render the middle coronal slice
-        const bounds = vol!.imageData.getBounds() as number[];
-        const midY = (bounds[2] + bounds[3]) / 2;
-        setSliceY(midY);
-        renderCoronalSlice(midY);
-      } else {
-        rafId = setTimeout(tryLoad, 800);
+    const handle = startBoundedPoll(
+      { intervalMs: DEFAULT_POLL_INTERVAL_MS, timeoutMs: pollTimeoutMs },
+      {
+        isReady: () => isVolumeReady(getVolume()),
+        onReady: () => {
+          const vol = getVolume();
+          const bounds = vol!.imageData.getBounds() as number[];
+          const mid = orientation === 'sagittal'
+            ? (bounds[0] + bounds[1]) / 2
+            : (bounds[2] + bounds[3]) / 2;
+
+          const controlled = sliceWorldCoordinateRef.current;
+          const targetPos = typeof controlled === 'number' ? controlled : mid;
+          applySlice(targetPos);
+
+          // First controlled viewport to become ready initializes the shared
+          // coordinate for its siblings; a viewport that already inherited a
+          // concrete value from the parent just renders it (no re-lift).
+          if (controlled === null) {
+            onSliceWorldCoordinateChangeRef.current?.(mid);
+          }
+        },
+        onTimeout: () => {
+          setStatus('error');
+          setErrorCode('VOLUME_LOAD_TIMEOUT');
+        },
       }
-    };
+    );
 
-    tryLoad();
+    return () => handle.cancel();
+  }, [displaySets, getVolume, orientation, applySlice, pollTimeoutMs, retryToken]);
 
-    return () => {
-      cancelled = true;
-      if (rafId !== null) clearTimeout(rafId);
-    };
-  }, [displaySets, getVolume, renderCoronalSlice]);
+  // ── Controlled slice-position sync: re-render when a sibling column moves
+  //    the shared slider (plan §10 P3.4) ─────────────────────────────────────
+  useEffect(() => {
+    if (sliceWorldCoordinate === undefined || sliceWorldCoordinate === null) return;
+    if (status !== 'ready' && status !== 'rendering') return;
+    const last = lastAppliedSliceRef.current;
+    if (last !== null && Math.abs(sliceWorldCoordinate - last) < 1e-6) return;
+    applySlice(sliceWorldCoordinate);
+  }, [sliceWorldCoordinate, status, applySlice]);
+
+  // ── Controlled W/L sync: re-apply when a compare-mode parent's shared
+  //    window/level changes (locked panels only — see DentalContainerViewport) ─
+  useEffect(() => {
+    if (windowWidth === undefined && windowCenter === undefined) return;
+    const nextWw = windowWidth ?? wwRef.current;
+    const nextWl = windowCenter ?? wlRef.current;
+    if (nextWw === wwRef.current && nextWl === wlRef.current) return;
+    wwRef.current = nextWw;
+    wlRef.current = nextWl;
+    setWw(nextWw);
+    setWl(nextWl);
+    const actor = actorRef.current;
+    if (actor) {
+      actor.getProperty().setColorWindow(nextWw);
+      actor.getProperty().setColorLevel(nextWl);
+      renderWindowRef.current?.render();
+    }
+  }, [windowWidth, windowCenter]);
 
   // ── Slider change handler ─────────────────────────────────────────────────
   const handleSliderChange = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
-      const y = Number(e.target.value);
-      setSliceY(y);
-      renderCoronalSlice(y);
+      const nextPos = Number(e.target.value);
+      applySlice(nextPos);
+      onSliceWorldCoordinateChangeRef.current?.(nextPos);
     },
-    [renderCoronalSlice]
+    [applySlice]
   );
+
+  const applyWindowLevel = useCallback((nextWw: number, nextWl: number) => {
+    wwRef.current = nextWw;
+    wlRef.current = nextWl;
+    setWw(nextWw);
+    setWl(nextWl);
+    const actor = actorRef.current;
+    if (actor) {
+      actor.getProperty().setColorWindow(nextWw);
+      actor.getProperty().setColorLevel(nextWl);
+      renderWindowRef.current?.render();
+    }
+    onWindowLevelChangeRef.current?.(nextWw, nextWl);
+  }, []);
+
+  const handleWindowWidthChange = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      const next = Number(e.target.value);
+      if (Number.isFinite(next) && next > 0) applyWindowLevel(next, wlRef.current);
+    },
+    [applyWindowLevel]
+  );
+
+  const handleWindowCenterChange = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      const next = Number(e.target.value);
+      if (Number.isFinite(next)) applyWindowLevel(wwRef.current, next);
+    },
+    [applyWindowLevel]
+  );
+
+  const handleRetry = useCallback(() => {
+    setStatus('idle');
+    setErrorCode(null);
+    setRetryToken(t => t + 1);
+  }, []);
 
   // ── Arch position indicator ────────────────────────────────────────────────
   // When the CPR viewport fires a cross-section event, the event carries a
@@ -343,24 +483,18 @@ export default function DentalMPRViewport({
   useEffect(() => {
     const handler = (evt: Event) => {
       const { frame } = (evt as CustomEvent<CrossSectionEventDetail>).detail;
-      const [, yBoundsMax] = yBoundsRef.current;
-      const yBoundsMin = yBoundsRef.current[0];
-      const yRange = yBoundsMax - yBoundsMin;
-      if (yRange <= 0) return;
+      const [axisLo, axisHi] = yBoundsRef.current;
+      const axisRange = axisHi - axisLo;
+      if (axisRange <= 0) return;
 
-      // frame.point[1] is the arch sample's patient-Y coordinate.
-      // Map to fraction along the viewport's Y axis.
-      // The viewport displays the volume from yMin (top) to yMax (bottom)
-      // (because output Y = -patient Z = superior down; but the A/P position
-      // only shifts where we cut, not how it appears within the slice).
-      // For the indicator we map arch-Y along the visible Y slider range.
-      const pct = (frame.point[1] - yBoundsMin) / yRange;
+      const axisPoint = orientation === 'sagittal' ? frame.point[0] : frame.point[1];
+      const pct = (axisPoint - axisLo) / axisRange;
       setArchLinePct(Math.max(0, Math.min(1, pct)));
     };
 
     window.addEventListener(ARCH_CROSS_SECTION_POSITION, handler);
     return () => window.removeEventListener(ARCH_CROSS_SECTION_POSITION, handler);
-  }, []);
+  }, [orientation]);
 
   // ── Status colour ─────────────────────────────────────────────────────────
   const statusColor: Record<RenderStatus, string> = {
@@ -370,7 +504,10 @@ export default function DentalMPRViewport({
     error:     '#ff6b6b',
   };
 
-  const yRangeSpan = yMax - yMin || 1;
+  const axisRangeSpan = axisMax - axisMin || 1;
+  const viewLabel = labelOverride ?? (orientation === 'sagittal' ? 'MPR · Sagittal' : 'MPR · Coronal');
+  const sliceLabel = orientation === 'sagittal' ? 'X' : 'Y';
+  const canRetry = errorCode !== 'WEBGL_UNAVAILABLE';
 
   return (
     <div
@@ -398,12 +535,12 @@ export default function DentalMPRViewport({
           fontSize: 12,
         }}
       >
-        {/* Viewport label */}
-        <span style={{ color: '#00aaff', fontWeight: 700, letterSpacing: '0.02em' }}>
-          MPR · Coronal
+        {/* Viewport label — also carries the orientation, always visible */}
+        <span style={{ color: accentColor, fontWeight: 700, letterSpacing: '0.02em' }}>
+          {viewLabel}
         </span>
 
-        {/* Status message */}
+        {/* Status message — patient coordinate + W/L visible once ready */}
         <span
           style={{
             flex: 1,
@@ -416,42 +553,85 @@ export default function DentalMPRViewport({
         >
           {status === 'idle'      && 'Waiting for volume…'}
           {status === 'rendering' && 'Rendering…'}
-          {status === 'ready'     && `Slice  ${sliceY.toFixed(1)} mm`}
-          {status === 'error'     && 'Volume not ready'}
+          {status === 'ready'     && `Slice ${sliceLabel} ${slicePos.toFixed(1)} mm · W ${Math.round(ww)} / L ${Math.round(wl)}`}
+          {status === 'error'     && `Fehler: ${errorCode ? ERROR_MESSAGES[errorCode] : 'Volumen nicht bereit'}`}
         </span>
 
-        {/* A/P slice slider — only shown once the volume is loaded */}
-        {(status === 'ready' || status === 'rendering') && (
-          <label
+        {status === 'error' && canRetry && (
+          <button
+            onClick={handleRetry}
+            title="Volumen erneut laden"
             style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 6,
+              background: 'transparent',
+              border: '1px solid #555',
+              borderRadius: 6,
+              color: '#eee',
+              cursor: 'pointer',
+              fontSize: 11,
+              padding: '2px 8px',
               flexShrink: 0,
             }}
           >
-            <span style={{ color: '#aaa', fontSize: 11 }}>Slice</span>
-            <input
-              type="range"
-              min={yMin}
-              max={yMax}
-              step={(yRangeSpan / 200).toFixed(2)}
-              value={sliceY}
-              onChange={handleSliderChange}
-              style={{ width: 90, accentColor: '#00aaff', cursor: 'pointer' }}
-            />
-            <span
+            ↻ Erneut versuchen
+          </button>
+        )}
+
+        {/* A/P slice slider + W/L inputs — only shown once the volume is loaded */}
+        {(status === 'ready' || status === 'rendering') && (
+          <>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }} title="Fensterbreite (Window Width)">
+              <span style={{ color: '#aaa', fontSize: 11 }}>W</span>
+              <input
+                type="number"
+                value={Math.round(ww)}
+                min={1}
+                step={50}
+                onChange={handleWindowWidthChange}
+                style={{ width: 52, fontSize: 11, background: '#1a1a1a', color: '#eee', border: '1px solid #333', borderRadius: 4 }}
+              />
+            </label>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }} title="Fensterlage (Window Level)">
+              <span style={{ color: '#aaa', fontSize: 11 }}>L</span>
+              <input
+                type="number"
+                value={Math.round(wl)}
+                step={50}
+                onChange={handleWindowCenterChange}
+                style={{ width: 52, fontSize: 11, background: '#1a1a1a', color: '#eee', border: '1px solid #333', borderRadius: 4 }}
+              />
+            </label>
+            <label
               style={{
-                color: '#fff',
-                minWidth: 50,
-                textAlign: 'right',
-                fontSize: 11,
-                fontVariantNumeric: 'tabular-nums',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 6,
+                flexShrink: 0,
               }}
             >
-              {sliceY.toFixed(1)} mm
-            </span>
-          </label>
+              <span style={{ color: '#aaa', fontSize: 11 }}>Slice</span>
+              <input
+                type="range"
+                aria-label={`Slice ${viewLabel}`}
+                min={axisMin}
+                max={axisMax}
+                step={(axisRangeSpan / 200).toFixed(2)}
+                value={slicePos}
+                onChange={handleSliderChange}
+                style={{ width: 90, accentColor, cursor: 'pointer' }}
+                />
+              <span
+                style={{
+                  color: '#fff',
+                  minWidth: 50,
+                  textAlign: 'right',
+                  fontSize: 11,
+                  fontVariantNumeric: 'tabular-nums',
+                }}
+              >
+                {slicePos.toFixed(1)} mm
+              </span>
+            </label>
+          </>
         )}
       </div>
 
@@ -477,16 +657,18 @@ export default function DentalMPRViewport({
               textAlign: 'center',
             }}
           >
-            <div style={{ fontSize: 34, opacity: 0.5 }}>⚡</div>
+            <div style={{ fontSize: 34, opacity: 0.5 }}>{status === 'error' ? '⚠' : '⚡'}</div>
             <div
               style={{
                 fontSize: 12,
                 lineHeight: 1.7,
-                color: '#3a3a3a',
-                maxWidth: 280,
-              }}
-            >
-              Coronal MPR — Complete the arch to load volume
+                color: status === 'error' ? '#7a4a4a' : '#3a3a3a',
+              maxWidth: 280,
+            }}
+          >
+              {status === 'error'
+                ? (errorCode ? ERROR_MESSAGES[errorCode] : 'Volumen nicht bereit')
+                : `${viewLabel} — complete the arch to load volume`}
             </div>
           </div>
         )}
@@ -502,7 +684,7 @@ export default function DentalMPRViewport({
               // archLinePct=0 → anterior (top of A/P range) → top of viewport.
               top: `${archLinePct * 100}%`,
               height: 2,
-              background: '#00aaff',
+              background: accentColor,
               opacity: 0.7,
               pointerEvents: 'none',
               zIndex: 10,
@@ -515,7 +697,7 @@ export default function DentalMPRViewport({
                 right: 6,
                 top: 3,
                 fontSize: 10,
-                color: '#00aaff',
+                color: accentColor,
                 fontFamily: 'system-ui, -apple-system, sans-serif',
                 opacity: 0.9,
                 letterSpacing: '0.03em',

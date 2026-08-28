@@ -5,15 +5,43 @@ global.fetch = jest.fn();
 const mockFetch = global.fetch as jest.Mock;
 
 import {
+  findStoredMarSeriesResult,
+  getStoredMarSeriesResult,
+  invalidateStoredMarSeriesResult,
   parseStudyResponse,
   OrthancClient,
   getOrthancRestBase,
+  getSeriesViewerPath,
   getStudyModalities,
   getStudyViewerPath,
   getStudyInstanceUIDFromStowResponse,
   isZipFile,
+  saveStoredMarSeriesResult,
   supportsDentalViewer,
 } from '../src/utils/orthancClient';
+
+const storageState = new Map<string, string>();
+
+Object.defineProperty(global, 'localStorage', {
+  value: {
+    getItem: (key: string) => (storageState.has(key) ? storageState.get(key)! : null),
+    setItem: (key: string, value: string) => {
+      storageState.set(key, String(value));
+    },
+    removeItem: (key: string) => {
+      storageState.delete(key);
+    },
+    clear: () => {
+      storageState.clear();
+    },
+  },
+  configurable: true,
+});
+
+beforeEach(() => {
+  storageState.clear();
+  mockFetch.mockReset();
+});
 
 describe('parseStudyResponse', () => {
   test('parses complete DICOMweb study entry', () => {
@@ -198,6 +226,68 @@ describe('upload helpers', () => {
     expect(supportsDentalViewer({ modality: 'MR' })).toBe(false);
   });
 
+  test('builds a filtered series viewer path with initial series and MAR compare params', () => {
+    expect(
+      getSeriesViewerPath(
+        {
+          studyInstanceUID: '1.2.3',
+          modality: 'CT',
+        },
+        ['2.3.4', '5.6.7', '2.3.4'],
+        '5.6.7',
+        {
+          marSourceSeriesInstanceUID: '2.3.4',
+          marResultSeriesInstanceUID: '5.6.7',
+        }
+      )
+    ).toBe(
+      '/dentalCPR?StudyInstanceUIDs=1.2.3&SeriesInstanceUIDs=2.3.4%2C5.6.7&initialSeriesInstanceUID=5.6.7&marSourceSeriesInstanceUID=2.3.4&marResultSeriesInstanceUID=5.6.7'
+    );
+  });
+
+  // ── P3.1: URL/series-state edge cases ─────────────────────────────────────
+
+  test('series path with an empty UID list omits SeriesInstanceUIDs entirely (single-series fallback)', () => {
+    expect(
+      getSeriesViewerPath({ studyInstanceUID: '1.2.3', modality: 'CT' }, [])
+    ).toBe('/dentalCPR?StudyInstanceUIDs=1.2.3');
+  });
+
+  test('series path drops blank/whitespace-only UIDs from the list', () => {
+    expect(
+      getSeriesViewerPath({ studyInstanceUID: '1.2.3', modality: 'CT' }, ['', '  ', '2.3.4'])
+    ).toBe('/dentalCPR?StudyInstanceUIDs=1.2.3&SeriesInstanceUIDs=2.3.4');
+  });
+
+  test('series path dedupes repeated UIDs while preserving first-seen order', () => {
+    expect(
+      getSeriesViewerPath({ studyInstanceUID: '1.2.3', modality: 'CT' }, ['a.1', 'b.2', 'a.1', 'b.2'])
+    ).toBe('/dentalCPR?StudyInstanceUIDs=1.2.3&SeriesInstanceUIDs=a.1%2Cb.2');
+  });
+
+  test('series path omits initialSeriesInstanceUID when not provided', () => {
+    expect(
+      getSeriesViewerPath({ studyInstanceUID: '1.2.3', modality: 'CT' }, ['a.1'])
+    ).toBe('/dentalCPR?StudyInstanceUIDs=1.2.3&SeriesInstanceUIDs=a.1');
+  });
+
+  test('series path omits falsy extraParams entries (incomplete MAR-compare params fall back cleanly)', () => {
+    expect(
+      getSeriesViewerPath(
+        { studyInstanceUID: '1.2.3', modality: 'CT' },
+        ['a.1'],
+        undefined,
+        { marSourceSeriesInstanceUID: 'a.1', marResultSeriesInstanceUID: undefined }
+      )
+    ).toBe('/dentalCPR?StudyInstanceUIDs=1.2.3&SeriesInstanceUIDs=a.1&marSourceSeriesInstanceUID=a.1');
+  });
+
+  test('series path URL-encodes UIDs containing reserved characters', () => {
+    expect(
+      getSeriesViewerPath({ studyInstanceUID: 'study a/b', modality: 'CT' }, ['s a', 's&b'])
+    ).toBe('/dentalCPR?StudyInstanceUIDs=study+a%2Fb&SeriesInstanceUIDs=s+a%2Cs%26b');
+  });
+
   test('detects ZIP uploads by file name or MIME type', () => {
     expect(isZipFile({ name: 'foo.zip', type: '' } as File)).toBe(true);
     expect(isZipFile({ name: 'foo.dcm', type: 'application/zip' } as File)).toBe(true);
@@ -217,5 +307,122 @@ describe('upload helpers', () => {
         },
       })
     ).toBe('1.2.840.1');
+  });
+});
+
+describe('OrthancClient.checkSeriesExists', () => {
+  test('returns true when the QIDO series search finds a match', async () => {
+    mockFetch.mockResolvedValueOnce({ ok: true, json: async () => [{ '0020000E': { Value: ['s.1'] } }] });
+    const client = new OrthancClient('/pacs/dicom-web');
+    await expect(client.checkSeriesExists('s.1')).resolves.toBe(true);
+    expect(mockFetch).toHaveBeenCalledWith('/pacs/dicom-web/series?SeriesInstanceUID=s.1');
+  });
+
+  test('returns false when the series is confirmed gone (empty result set)', async () => {
+    mockFetch.mockResolvedValueOnce({ ok: true, json: async () => [] });
+    const client = new OrthancClient('/pacs/dicom-web');
+    await expect(client.checkSeriesExists('s.gone')).resolves.toBe(false);
+  });
+
+  test('returns true (cannot verify) on a non-ok HTTP response rather than declaring the series gone', async () => {
+    mockFetch.mockResolvedValueOnce({ ok: false, status: 503, statusText: 'Service Unavailable' });
+    const client = new OrthancClient('/pacs/dicom-web');
+    await expect(client.checkSeriesExists('s.1')).resolves.toBe(true);
+  });
+
+  test('returns true (cannot verify) on a network error', async () => {
+    mockFetch.mockRejectedValueOnce(new Error('net::ERR_CONNECTION_REFUSED'));
+    const client = new OrthancClient('/pacs/dicom-web');
+    await expect(client.checkSeriesExists('s.1')).resolves.toBe(true);
+  });
+
+  test('returns false for an empty series UID without calling fetch', async () => {
+    const client = new OrthancClient('/pacs/dicom-web');
+    await expect(client.checkSeriesExists('')).resolves.toBe(false);
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+});
+
+describe('OrthancClient.waitForSeriesQueryable', () => {
+  test('resolves true immediately when the series is already queryable', async () => {
+    mockFetch.mockResolvedValueOnce({ ok: true, json: async () => [{ '0020000E': { Value: ['s.1'] } }] });
+    const client = new OrthancClient('/pacs/dicom-web');
+    await expect(client.waitForSeriesQueryable('s.1', { delayMs: 0 })).resolves.toBe(true);
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+
+  test('retries through eventual-consistency lag and resolves true once found', async () => {
+    mockFetch
+      .mockResolvedValueOnce({ ok: true, json: async () => [] })
+      .mockResolvedValueOnce({ ok: true, json: async () => [] })
+      .mockResolvedValueOnce({ ok: true, json: async () => [{ '0020000E': { Value: ['s.1'] } }] });
+    const client = new OrthancClient('/pacs/dicom-web');
+    await expect(client.waitForSeriesQueryable('s.1', { attempts: 5, delayMs: 0 })).resolves.toBe(true);
+    expect(mockFetch).toHaveBeenCalledTimes(3);
+  });
+
+  test('gives up after the attempt budget and resolves false without throwing', async () => {
+    mockFetch.mockResolvedValue({ ok: true, json: async () => [] });
+    const client = new OrthancClient('/pacs/dicom-web');
+    await expect(client.waitForSeriesQueryable('s.gone', { attempts: 3, delayMs: 0 })).resolves.toBe(false);
+    expect(mockFetch).toHaveBeenCalledTimes(3);
+  });
+});
+
+describe('stored MAR series helpers', () => {
+  test('stores and retrieves MAR series mapping by source series', () => {
+    saveStoredMarSeriesResult({
+      studyInstanceUID: '1.2.3',
+      sourceSeriesInstanceUID: 'orig.1',
+      marSeriesInstanceUID: 'mar.1',
+    });
+
+    expect(getStoredMarSeriesResult('orig.1')).toEqual(
+      expect.objectContaining({
+        studyInstanceUID: '1.2.3',
+        sourceSeriesInstanceUID: 'orig.1',
+        marSeriesInstanceUID: 'mar.1',
+      })
+    );
+  });
+
+  test('finds MAR series mapping from either original or MAR series uid', () => {
+    saveStoredMarSeriesResult({
+      studyInstanceUID: '1.2.3',
+      sourceSeriesInstanceUID: 'orig.2',
+      marSeriesInstanceUID: 'mar.2',
+    });
+
+    expect(findStoredMarSeriesResult('orig.2')).toEqual(
+      expect.objectContaining({ marSeriesInstanceUID: 'mar.2' })
+    );
+    expect(findStoredMarSeriesResult('mar.2')).toEqual(
+      expect.objectContaining({ sourceSeriesInstanceUID: 'orig.2' })
+    );
+  });
+
+  test('invalidateStoredMarSeriesResult removes a mapping by source series UID (regenerate path)', () => {
+    saveStoredMarSeriesResult({
+      studyInstanceUID: '1.2.3',
+      sourceSeriesInstanceUID: 'orig.3',
+      marSeriesInstanceUID: 'mar.3',
+    });
+    expect(getStoredMarSeriesResult('orig.3')).toBeDefined();
+
+    invalidateStoredMarSeriesResult('orig.3');
+
+    expect(getStoredMarSeriesResult('orig.3')).toBeUndefined();
+    expect(findStoredMarSeriesResult('mar.3')).toBeUndefined();
+  });
+
+  test('invalidateStoredMarSeriesResult is a no-op for an unknown or empty UID', () => {
+    saveStoredMarSeriesResult({
+      studyInstanceUID: '1.2.3',
+      sourceSeriesInstanceUID: 'orig.4',
+      marSeriesInstanceUID: 'mar.4',
+    });
+    invalidateStoredMarSeriesResult('does-not-exist');
+    invalidateStoredMarSeriesResult('');
+    expect(getStoredMarSeriesResult('orig.4')).toBeDefined();
   });
 });
