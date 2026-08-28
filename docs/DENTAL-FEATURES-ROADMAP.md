@@ -247,15 +247,16 @@ Für KFO: automatische oder semi-automatische Messung von cephalometrischen Punk
 
 | Component | Build-Status | Verifiziert |
 |-----------|-------------|-------------|
-| `Dockerfile.ohif` (node:22, pluginConfig.json) | ✅ Gebaut | ✅ 2026-03-24 |
+| `Dockerfile.ohif` (node:22, pluginConfig.json) | ✅ Gebaut | ✅ 2026-03-24, ✅ erneut 2026-08-28 (P3/P7, `docker compose build viewer`) |
 | `scripts/ohif/register-packages.js` | ✅ Gebaut | ✅ process.cwd() fix |
 | `scripts/ohif/register-plugins.js` | ✅ Gebaut | ✅ non-fatal Step B |
 | `scripts/ohif/compile-extensions.js` | ✅ Gebaut | ✅ JSX/TSX → ESM |
-| DentalCPRViewport (vtkImageCPRMapper) | ✅ Webpack-Build OK | ⚠️ Runtime nicht verifiziert |
-| DentalCrossSectionViewport (vtkImageReslice) | ✅ Webpack-Build OK | ⚠️ Runtime nicht verifiziert |
+| DentalCPRViewport (vtkImageCPRMapper) | ✅ Webpack-Build OK | ✅ Runtime verifiziert 2026-08-28 — Live-Screenshot aus isoliertem Teststack (`gate_g3_viewer_cpr.png`, PHI-frei, Phantom-Studie) zeigt die CPR-Ansicht tatsächlich gerendert |
+| DentalCrossSectionViewport (vtkImageReslice) | ✅ Webpack-Build OK | ⚠️ Weiterhin nicht dediziert Runtime-verifiziert — die 2026-08-28-Screenshots decken CPR + MPR-Panels ab, keinen expliziten Cross-Section-Grid-Nachweis |
 | DentalArchSplineTool | ✅ 6 Tests + Webpack OK | ✅ |
 | NerveCanalTool, BoneThicknessTool, etc. | ✅ 17 Tests + Webpack OK | ✅ |
-| Hanging Protocol (3-Panel CBCT) | ✅ Webpack-Build OK | ⚠️ Runtime nicht verifiziert |
+| Hanging Protocol (3-Panel CBCT) | ✅ Webpack-Build OK | ⚠️ Weiterhin nicht dediziert Runtime-verifiziert (kein expliziter Test/Screenshot für das 3-Panel-Layout als solches) |
+| DentalMPRViewport (Original/MAR/Diff, W/L-Readout) | ✅ Webpack-Build OK | ✅ Runtime verifiziert 2026-08-28 — Live-Screenshot (`gate_g3_viewer_mpr.png`) zeigt MPR-Panels inkl. neuem W/L-Readout ("W 2000 / L 400"); bounded-Poll-Timeout+Retry-UI live beobachtet |
 
 **Build-Fixes (2026-03-24):**
 - `ca-certificates` + `python3 make g++` — SSL + node-gyp native modules
@@ -263,10 +264,16 @@ Für KFO: automatische oder semi-automatische Messung von cephalometrischen Punk
 - `compile-extensions.js` — Babel pre-compilation mit `modules: false` (ESM erhalten)
   → OHIF's webpack babel-loader excludes workspace symlinks; pre-compile löst das
 
-**Bekannte offene Punkte (Runtime-Verifikation):**
-- `vtkImageReslice` Importpfad: `@kitware/vtk.js/Imaging/Core/ImageReslice` — nur Webpack-Build OK, Runtime-Test mit echten CBCT-Daten steht aus
-- DentalCPRViewport + vtkImageCPRMapper: Webpack-Build OK, vtk.js Runtime-Bindung zu verifizieren
-- Hanging Protocol 3-Panel-Layout: Webpack-Build OK, OHIF-Layout-Engine Runtime zu testen
+**Runtime-Verifikationsstatus, Update 2026-08-28 (Track A, Phasen P3/P4, siehe `docs/AUTONOMOUS-EXECUTION-PLAN-2026-08-28.md` Phasenberichte):**
+- Viewer-Image erneut gebaut und in Produktion (`:3000`) sowie isoliertem Teststack (`:3100`) gesund neu gestartet.
+- E2E gegen den isolierten Teststack (`tests/e2e/dental-cpr-ui.spec.js`, echte synthetische 300-Slice-CBCT-Fixture): 6 von 8 Szenarien grün — Studie aus Tabelle/Patient-Tree öffnen, Orthanc-Admin-Import, "MAR öffnen" lädt Ergebnisserie direkt, Reload findet MAR-Mapping über localStorage wieder, unvollständige Compare-URL fällt auf funktionierende Einzelserien-MPR-Ansicht zurück.
+- 2 von 8 Szenarien (Kompletter Einstieg in das 3-Spalten-Compare-Grid) NICHT verifiziert — gleichzeitiges Laden zweier voller 300-Instanz-Serien (600 Instanzen WADO-Metadaten+Pixel) überschritt praktikable Test-Timeouts in dieser Sandbox-Umgebung. Kein bestätigter Logikfehler: die Fallback-Einzelserien-Ansicht zeigt live korrekt die neue bounded-Poll-Timeout+Retry-UI statt endlos zu hängen — direkter Live-Beleg, dass der P3.3-Fix funktioniert.
+- Empfehlung unverändert: beide Szenarien auf schnellerer Hardware/Netzwerk erneut ausführen, bevor dieser Bereich als vollständig runtime-verifiziert gilt.
+
+**Bekannte offene Punkte (Runtime-Verifikation), Stand 2026-08-28:**
+- `vtkImageReslice` Importpfad: `@kitware/vtk.js/Imaging/Core/ImageReslice` — weiterhin nur Webpack-Build OK, kein dedizierter Cross-Section-Runtime-Test mit echten CBCT-Daten
+- Hanging Protocol 3-Panel-Layout: weiterhin nur Webpack-Build OK, kein dedizierter Runtime-Test des Layouts als solches (auch wenn Studien im Alltag sichtbar mehrere Panels korrekt rendern)
+- 3-Spalten-MAR-Compare-Grid (Original/MAR/Diff gleichzeitig sichtbar): Unit-getestet (32 Tests) und code-reviewt, aber der Moment "Grid wird nach Klick auf 'Vergleich' sichtbar" ist in dieser Sandbox-Umgebung nicht end-to-end verifiziert (siehe oben)
 
 ---
 

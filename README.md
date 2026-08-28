@@ -67,22 +67,26 @@ Storage: Orthanc → SQLite + filesystem (./data/orthanc-db/)
 | [Orthanc](https://www.orthanc-server.com/) | 24.12.2 | PACS server, DICOMweb, DIMSE |
 | [AmbientCT Viewer](https://github.com/Ambientwork/AmbientCT) | v0.2.0 | Web imaging frontend, built on OHIF v3.9.2 |
 | [Cornerstone3D](https://www.cornerstonejs.org/) | latest | 3D rendering engine |
+| [ai-inference](ai-inference/) | v0.3.0 (Phase 3b-2) | AI Assist backend — demo/real DentalSegmentator (nnU-Net) inference, DICOM SEG output |
 | Nginx | latest | Reverse proxy |
+
+> The root [`VERSION`](VERSION) file (`1.0.0`) is a legacy release tag that predates this table and has not been re-cut for the current work; it is not a claim that every component below is at that maturity. Per-component versions above are the source of truth for what actually runs today. Reconciling `VERSION` with an actual release is left for a dedicated release/versioning pass, not bundled into this docs sync.
 
 ---
 
 ## AI Assist (research preview)
 
-AmbientCT ships an early-stage **AI Assist** layer for dental CBCT review. It is a foundation, not a product feature: the data model, panel UI, and inference adapter are in place, backed by a local browser-side mock with clearly marked demo data. No image, header, or log ever leaves your machine.
+AmbientCT ships a Phase 3b-2 **AI Assist** layer for dental CBCT review: a local FastAPI service (`ai-inference/`, internal Docker network only, no host port) alongside the browser-side mock adapter. No image, header, or log ever leaves your machine — there is no cloud inference and no telemetry.
 
-| What works today | What is intentionally mocked |
-|------------------|------------------------------|
-| Typed data model for jobs, findings, anatomy segmentations | Real model inference (no weights downloaded) |
-| Findings store with reviewer state (accept / reject / edited) | Out-of-distribution detection (placeholder only) |
-| AI Assist right-panel with confidence + uncertainty display | Persistence to Orthanc metadata (in-memory + localStorage only) |
-| Adapter API mirroring the planned local FastAPI service shape | Audit-log persistence (logged in-browser only) |
+The service resolves one of three explicit modes on every health check and job start (never cached, never guessed): `demo` (synthetic predictor, opt-in via `AI_INFERENCE_DEMO_MODE=true`), `real` (DentalSegmentator nnU-Net, requires a downloaded and unpacked model folder), `unavailable` (no valid model and demo off — the service stays healthy, a started job fails fast with a clear reason instead of silently producing clinically-plausible synthetic output).
 
-Every suggestion is labeled **"Research Preview · Demo Data · Not for Diagnosis"** and requires clinician confirmation. The first real model integration target is mandibular-canal anatomy segmentation, following the [DentalSegmentator](https://github.com/gaudot/SlicerDentalSegmentator) and [MONAI Label](https://monai.io/label.html) approach. See [`docs/AI-ASSIST-ARCHITECTURE.md`](docs/AI-ASSIST-ARCHITECTURE.md) for the phased roadmap and risk controls, and [`docs/DENTAL-FEATURES-ROADMAP.md`](docs/DENTAL-FEATURES-ROADMAP.md) for the broader feature plan.
+| Runtime-verified today (2026-08-28, isolated test stack) | Implemented but not yet runtime-verified | Intentionally out of scope for this repo |
+|---|---|---|
+| Demo job pipeline end-to-end: `queued → running → review_required`, findings clearly marked `isDemo=true` / `ambientct-mock-v0` | Real DentalSegmentator (nnU-Net) inference — code path is complete (correct volume spacing, `tile_step_size=0.9`, mirroring disabled, canal label from model metadata) but **no model weights have been downloaded**; status `pending_external_artifact` | Out-of-distribution detection (stub only) |
+| Demo DICOM SEG write → Orthanc STOW-RS → re-read → all per-frame source-instance references validated against the real source series (0 fabricated references) | — | Persistence of MAR mapping / review state to Orthanc metadata (in-memory + localStorage only) |
+| Demo SEG persistence gated behind `AI_INFERENCE_PERSIST_DEMO_SEG` (default `false`; only enabled in the isolated `ambientct-test` stack) so nothing synthetic reaches a normal PACS instance by default | — | Structured report (DICOM SR) export |
+
+Every suggestion is labeled **"Research Preview · Demo Data · Not for Diagnosis"** in the UI, and a persisted demo SEG carries the same marking inside the DICOM file itself (`SeriesDescription` / `ManufacturerModelName`) so it can never be mistaken for a real result in a PACS browser. See [`ai-inference/README.md`](ai-inference/README.md) for the service details and mode table, [`docs/AI-ASSIST-ARCHITECTURE.md`](docs/AI-ASSIST-ARCHITECTURE.md) for the architecture and risk controls, and [`docs/DENTAL-FEATURES-ROADMAP.md`](docs/DENTAL-FEATURES-ROADMAP.md) for the broader feature plan.
 
 ---
 
@@ -92,6 +96,7 @@ Every suggestion is labeled **"Research Preview · Demo Data · Not for Diagnosi
 - [Architecture Decisions](docs/ARCHITECTURE.md)
 - [AI Assist Architecture](docs/AI-ASSIST-ARCHITECTURE.md)
 - [Dental Features Roadmap](docs/DENTAL-FEATURES-ROADMAP.md)
+- [Dental Viewer Feature Matrix & Plan](docs/DENTAL-VIEWER-FEATURE-MATRIX-AND-PLAN.md)
 - [Troubleshooting](docs/TROUBLESHOOTING.md)
 - [Third-Party Notices](THIRD_PARTY_NOTICES.md)
 

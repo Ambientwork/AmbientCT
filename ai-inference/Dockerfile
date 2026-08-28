@@ -85,6 +85,13 @@ CMD ["pytest", "tests", "-q"]
 # ── Stage 3: runtime image ────────────────────────────────────────────────────
 FROM python:3.11-slim-bookworm
 
+# Keep in sync with SERVICE_VERSION in main.py and the ai-inference row in
+# README.md's component table — three places, one number (plan §14 P7.1).
+LABEL org.opencontainers.image.title="ambientct-ai-inference" \
+      org.opencontainers.image.version="0.3.0" \
+      org.opencontainers.image.description="AmbientCT AI Assist inference service — Phase 3b-2, demo/real DentalSegmentator (nnU-Net) mandibular-canal segmentation" \
+      org.opencontainers.image.licenses="MIT"
+
 # Runtime-only native libs (no build-essential — that stays in builder)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libgl1-mesa-glx \

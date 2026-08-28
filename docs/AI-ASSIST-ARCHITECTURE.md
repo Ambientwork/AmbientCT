@@ -116,8 +116,8 @@ Ziel: stabile Architektur, kein echtes Modell nötig, Demo-fähig.
 - **Data Model** — TypeScript-Interfaces für `Finding`, `ReviewedFinding`, `AIJob`, `AuditEntry` in `extensions/dental-cpr/src/ai/types.ts`
 - **Mock-Adapter** — Browser-seitiger Mock (`MockAIAdapter`) spiegelt die Inference-Adapter-API vollständig via `localStorage`; kein Backend nötig
 - **AI-Panel-UI** — React-Panel in OHIF-Extension: Job-Trigger, Fortschrittsanzeige, Finding-Liste mit Review-Controls (Accept/Reject/Edit)
-- **Demo-Fixtures** — realistische Fixture-Findings für Mandibular-Canal + periapical_radiolucency, geladen wenn `AI_ASSIST_DEMO_MODE=true`
-- **Feature Flags** — `AI_ASSIST_ENABLED`, `AI_ASSIST_DEMO_MODE` in `.env.example`
+- **Demo-Fixtures** — realistische Fixture-Findings für Mandibular-Canal + periapical_radiolucency, geladen wenn `AI_INFERENCE_DEMO_MODE=true`
+- **Feature Flags** — `AI_INFERENCE_ENABLED`, `AI_INFERENCE_DEMO_MODE` in `.env.example` (real Variablennamen; siehe Korrektur unten unter "Risk Controls")
 - **Tests** — Unit-Tests für Adapter, Store, Scrub-Pipeline-Integration
 - **Docs** — dieses Dokument
 
@@ -125,14 +125,24 @@ Ziel: stabile Architektur, kein echtes Modell nötig, Demo-fähig.
 
 Ziel: lokale Anatomy-Segmentation, Mandibular-Canal als High-Value-Einstiegspunkt.
 
-- **Lokaler FastAPI-Inference-Container** (`ai-inference/`) nach `mar-processor/main.py`-Vorlage: async Job-Queue, Progress-Callbacks, Pydantic-Schemas, Health-Endpoint
+**Status 2026-08-28 (Phase 3b-2, Track A vollständig, Track B `pending_external_artifact`):**
+Der `ai-inference`-FastAPI-Container ist implementiert und läuft im internen
+Docker-Netzwerk (kein Host-Port); der Demo-Pfad ist end-to-end runtime-verifiziert
+im isolierten Teststack (Job-Queue, Health-Endpoint mit `mode`/`model_loaded`,
+DICOM-SEG-Schreibpfad inkl. STOW-RS-Roundtrip). Der reale DentalSegmentator-Pfad
+ist code-vollständig (Moduswahl, Label-Handling, Download-/Entpack-Skript,
+korrekte nnU-Net-Parameter), aber **ohne heruntergeladene Modellgewichte nicht
+gegen echte Inferenz getestet** — siehe `ai-inference/README.md` und
+`docs/DENTAL-VIEWER-FEATURE-MATRIX-AND-PLAN.md`.
+
+- **Lokaler FastAPI-Inference-Container** (`ai-inference/`) nach `mar-processor/main.py`-Vorlage: async Job-Queue, Progress-Callbacks, Pydantic-Schemas, Health-Endpoint — **implementiert**
 - **Modell-Kandidaten:**
-  - **DentalSegmentator** (3D Slicer Extension, nnU-Net-basiert) — gut dokumentiertes Anatomy-Segmentation-Modell für Zahn-CBCT; Mandibula, Maxilla, Zähne, Mandibular Canal. Bevorzugter Einstiegspunkt wegen Dental-Spezifität.
-  - **MONAI Label** — flexibler Active-Learning-Workflow, breite Modellbibliothek; sinnvoll wenn eigene Trainingsdata vorhanden
+  - **DentalSegmentator** (3D Slicer Extension, nnU-Net-basiert) — gut dokumentiertes Anatomy-Segmentation-Modell für Zahn-CBCT; Mandibula, Maxilla, Zähne, Mandibular Canal. Gewählter Einstiegspunkt; Download-Skript und Loader-Vertrag implementiert, Gewichte noch nicht heruntergeladen.
+  - **MONAI Label** — flexibler Active-Learning-Workflow, breite Modellbibliothek; nicht begonnen
   - Beide Optionen schließen sich nicht aus — Adapter-Interface bleibt gleich
-- **Mandibular-Canal-Detection** — höchster klinischer Wert für Implantatplanung (bereits in `DENTAL-FEATURES-ROADMAP.md` als Phase 4b priorisiert); gut durch DentalSegmentator abgedeckt
-- **DICOM SEG Output** — Segmentation-Ergebnis als DICOM SEG in Orthanc speichern; Cornerstone3D rendert Overlays nativ
-- **Scanner-Whitelist** — erste OOD-Heuristik: bekannte Hersteller/Modelle aus DICOM-Tags; unbekannte Scanner → `input_quality: warn`
+- **Mandibular-Canal-Detection** — höchster klinischer Wert für Implantatplanung (bereits in `DENTAL-FEATURES-ROADMAP.md` als Phase 4b priorisiert); Label-ID 5 aus dem Modell-Labelschema als Default konfiguriert
+- **DICOM SEG Output** — Segmentation-Ergebnis als DICOM SEG in Orthanc speichern; Cornerstone3D rendert Overlays nativ — Schreibpfad implementiert und im Demo-Modus runtime-verifiziert (Roundtrip + Referenz-Validierung); native OHIF-Anzeige der gespeicherten SEG-Overlays im AI-Panel bleibt offen (siehe Restarbeiten)
+- **Scanner-Whitelist** — erste OOD-Heuristik: bekannte Hersteller/Modelle aus DICOM-Tags; unbekannte Scanner → `input_quality: warn` — noch nicht begonnen
 
 ### Phase 6–12 Monate — Clinical Workflow Integration
 
@@ -274,8 +284,8 @@ POST /api/ai/findings/:findingId/review
 | **Out-of-Distribution Detection** | Stub in Phase 0–3: Voxel-Spacing-Range-Check (z.B. < 0.1 mm oder > 1.0 mm → Warn), Scanner-Tag-Whitelist (bekannte Hersteller/Protokolle). Echte OOD-Detektion (Mahalanobis-Distanz o.ä.) in Phase 6–12. | Stub Phase 0–3, Real Phase 6–12 |
 | **Scanner/Protocol Drift Notes** | DICOM-Header-Felder (`Manufacturer`, `ManufacturerModelName`, `KVP`, `ExposureTime`) werden job-seitig geloggt (PHI-scrubbed). Modell-Performance wird pro Hersteller-Gruppe separat getrackt. | Phase 3–6 |
 | **PHI-safe Logs** | Alle persistierten Logs durchlaufen `scripts/scrub.py`. Kein Patientenname, kein Geburtsdatum, kein `PatientID`-Klartext in Log-Files. `StudyInstanceUID` bleibt als opaker Identifier. | Phase 0–3 (bestehende Pipeline) |
-| **Feature Flags** | `AI_ASSIST_ENABLED` (default: false) und `AI_ASSIST_DEMO_MODE` (default: false) in `.env.example`. Demo-Mode lädt Fixture-Findings, kein echtes Modell nötig. | Phase 0–3 |
-| **Research Preview Badge** | Sichtbares Badge "Research Preview · Demo Data" im AI Panel, solange `AI_ASSIST_DEMO_MODE=true` oder kein validiertes Modell geladen ist. Nicht ausblendbar per CSS — hartcodiert im Panel-Header. | Phase 0–3 |
+| **Feature Flags** | Korrigiert (2026-08-28, Doku deckte sich zuvor nicht mit dem Code): die realen Variablennamen sind `AI_INFERENCE_ENABLED` (default: false) und `AI_INFERENCE_DEMO_MODE` (default: false) in `.env.example` — nicht `AI_ASSIST_*`. Demo-Mode lädt Fixture-/Mock-Findings, kein echtes Modell nötig. | Phase 0–3 (Foundation) + Phase 3b-2 (`ai-inference`-Service implementiert dieselben Flags server-seitig) |
+| **Research Preview Badge** | Sichtbares Badge "Research Preview · Demo Data · Not for Diagnosis" im AI Panel, solange `AI_INFERENCE_DEMO_MODE=true` oder kein validiertes Modell geladen ist. Nicht ausblendbar per CSS — hartcodiert im Panel-Header. Bei persistiertem Demo-SEG steht dieselbe Kennzeichnung zusätzlich in der DICOM-Datei selbst (SeriesDescription/ManufacturerModelName), damit sie im PACS-Browser nicht mit einem echten Ergebnis verwechselt werden kann. | Phase 0–3 + runtime-verifiziert 2026-08-28 (Gate G4, isolierter Teststack) |
 | **Reviewer-State vor Report** | Ein Finding wandert nur dann in den Report Draft, wenn `reviewerState === "accepted" || "edited"`. `pending` und `rejected` Findings werden nicht exportiert. Diese Prüfung findet server-seitig statt, nicht nur im Frontend. | Phase 3–6 |
 
 ---
@@ -361,4 +371,4 @@ Diese Punkte sind in Phase 0 bewusst nicht implementiert. Sie sind als eigene Is
 
 - **Performance-Indizes im Store** — `updateReview` ist O(studies × findings). Tolerable für Phase 0, wird relevant bei vielen Studies und vielen Findings → `findingId → studyInstanceUID`-Lookup-Map einführen.
 - **Audit-Log-Persistenz** — heute nur als Logging-Pfad konzeptionell beschrieben; tatsächliche Persistenz nach Orthanc Attachment API ist Phase-3-Arbeit.
-- **HTTP-Backend-Adapter** — heute `throw new Error('HTTP backend not implemented yet')`. Implementierung folgt der `mar-processor`-FastAPI-Vorlage in Phase 3 (siehe Roadmap-Sektion).
+- **HTTP-Backend-Adapter** — Korrektur 2026-08-28: dieser Punkt ist überholt. `InferenceClient` (`inferenceClient.ts`) implementiert den HTTP-Pfad inzwischen vollständig (kein Stub/Throw mehr) und ruft bei konfigurierter `baseUrl` real gegen den `ai-inference`-Service. Offen bleibt nur die volle Runtime-Verifikation des HTTP-Pfads gegen ein echtes (nicht Demo-)Modell — siehe `ai-inference/README.md`.
